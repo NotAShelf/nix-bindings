@@ -119,8 +119,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
-name = "nix-rust-bindings"
-version = "0.0.0"
+name = "nix-bindings"
+version = "2.28.4"
 dependencies = [
  "bindgen",
  "pkg-config",
