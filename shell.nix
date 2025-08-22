@@ -24,5 +24,6 @@ with pkgs;
     env = {
       RUST_SRC_PATH = "${rustPlatform.rustLibSrc}";
       LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+      BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
     };
   }
