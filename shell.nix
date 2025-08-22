@@ -8,9 +8,7 @@ with pkgs;
       rust-analyzer-unwrapped
       (rustfmt.override {asNightly = true;})
       clippy
-      nix-output-monitor
       taplo
-      yaml-language-server
       lldb
     ];
 
