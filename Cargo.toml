@@ -1,0 +1,10 @@
+[package]
+name = "nix-rust-bindings"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+bindgen = "0.72.0"
+pkg-config = "0.3.32"
