@@ -1,6 +1,8 @@
 # nix-bindings
 
-Rust FFI bindings for the Nix C API
+[Nix C API]: https://nix.dev/manual/nix/2.28/c-api
+
+Rust FFI bindings for the [Nix C API].
 
 ## Overview
 
