@@ -59,9 +59,9 @@ fn store_get_uri_and_storedir() {
         n: ::std::os::raw::c_uint,
         user_data: *mut ::std::os::raw::c_void,
     ) {
-        let s = unsafe { std::slice::from_raw_parts(start as *const u8, n as usize) };
+        let s = unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
         let s = std::str::from_utf8(s).unwrap();
-        let out = user_data as *mut Option<String>;
+        let out = user_data.cast::<Option<String>>();
         unsafe { *out = Some(s.to_string()) };
     }
 
@@ -79,7 +79,7 @@ fn store_get_uri_and_storedir() {
             ctx,
             store,
             Some(string_callback),
-            &mut uri as *mut _ as *mut _,
+            (&raw mut uri).cast(),
         );
         assert_eq!(res, nix_err_NIX_OK);
         assert!(uri.is_some());
@@ -89,7 +89,7 @@ fn store_get_uri_and_storedir() {
             ctx,
             store,
             Some(string_callback),
-            &mut storedir as *mut _ as *mut _,
+            (&raw mut storedir).cast(),
         );
         assert_eq!(res, nix_err_NIX_OK);
         assert!(storedir.is_some());
