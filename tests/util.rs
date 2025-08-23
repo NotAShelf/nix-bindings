@@ -1,10 +1,12 @@
 #![cfg(test)]
 
+use serial_test::serial;
 use std::ffi::{CStr, CString};
 
 use nix_bindings::*;
 
 #[test]
+#[serial]
 fn context_create_and_free() {
     unsafe {
         let ctx = nix_c_context_create();
@@ -14,6 +16,7 @@ fn context_create_and_free() {
 }
 
 #[test]
+#[serial]
 fn libutil_init() {
     unsafe {
         let ctx = nix_c_context_create();
@@ -25,6 +28,7 @@ fn libutil_init() {
 }
 
 #[test]
+#[serial]
 fn version_get() {
     unsafe {
         let version_ptr = nix_version_get();
@@ -40,6 +44,7 @@ fn version_get() {
 }
 
 #[test]
+#[serial]
 fn setting_set_and_get() {
     unsafe extern "C" fn string_callback(
         start: *const ::std::os::raw::c_char,

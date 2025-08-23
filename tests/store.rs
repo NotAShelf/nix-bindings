@@ -1,11 +1,13 @@
 #![cfg(test)]
 
+use serial_test::serial;
 use std::ffi::CString;
 use std::ptr;
 
 use nix_bindings::*;
 
 #[test]
+#[serial]
 fn libstore_init_and_open_free() {
     unsafe {
         let ctx = nix_c_context_create();
@@ -24,6 +26,7 @@ fn libstore_init_and_open_free() {
 }
 
 #[test]
+#[serial]
 fn parse_and_clone_free_store_path() {
     unsafe {
         let ctx = nix_c_context_create();
@@ -53,15 +56,16 @@ fn parse_and_clone_free_store_path() {
 }
 
 #[test]
+#[serial]
 fn store_get_uri_and_storedir() {
     unsafe extern "C" fn string_callback(
         start: *const ::std::os::raw::c_char,
         n: ::std::os::raw::c_uint,
         user_data: *mut ::std::os::raw::c_void,
     ) {
-        let s = unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
+        let s = unsafe { std::slice::from_raw_parts(start as *const u8, n as usize) };
         let s = std::str::from_utf8(s).unwrap();
-        let out = user_data.cast::<Option<String>>();
+        let out = user_data as *mut Option<String>;
         unsafe { *out = Some(s.to_string()) };
     }
 
@@ -75,7 +79,12 @@ fn store_get_uri_and_storedir() {
         assert!(!store.is_null());
 
         let mut uri: Option<String> = None;
-        let res = nix_store_get_uri(ctx, store, Some(string_callback), (&raw mut uri).cast());
+        let res = nix_store_get_uri(
+            ctx,
+            store,
+            Some(string_callback),
+            &mut uri as *mut _ as *mut _,
+        );
         assert_eq!(res, nix_err_NIX_OK);
         assert!(uri.is_some());
 
@@ -84,7 +93,7 @@ fn store_get_uri_and_storedir() {
             ctx,
             store,
             Some(string_callback),
-            (&raw mut storedir).cast(),
+            &mut storedir as *mut _ as *mut _,
         );
         assert_eq!(res, nix_err_NIX_OK);
         assert!(storedir.is_some());

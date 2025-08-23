@@ -13,3 +13,6 @@ pkg-config = "0.3.32"
 
 [dependencies]
 prettyplease = "0.2.37"
+
+[dev-dependencies]
+serial_test = "2"
