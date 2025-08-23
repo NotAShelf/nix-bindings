@@ -4,6 +4,11 @@ fn main() {
     // Tell cargo to invalidate the built crate whenever the wrapper changes
     println!("cargo:rerun-if-changed=wrapper.h");
 
+    // We must also link the required libraries for the C API symbols (in *c.so)
+    println!("cargo:rustc-link-lib=nixstorec");
+    println!("cargo:rustc-link-lib=nixutilc");
+    println!("cargo:rustc-link-lib=archive");
+
     // Use pkg-config to find nix-store include and link paths
     // This NEEDS to be included, or otherwise `nix_api_store.h` cannot
     // be found.
