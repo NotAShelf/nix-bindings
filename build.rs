@@ -7,6 +7,7 @@ fn main() {
     // We must also link the required libraries for the C API symbols (in *c.so)
     println!("cargo:rustc-link-lib=nixstorec");
     println!("cargo:rustc-link-lib=nixutilc");
+    println!("cargo:rustc-link-lib=nixexprc");
     println!("cargo:rustc-link-lib=archive");
 
     // Use pkg-config to find nix-store include and link paths
