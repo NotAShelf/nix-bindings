@@ -1,22 +1,22 @@
-name: "Check formating & lints"
+name: "Run Tests"
 
 on:
   workflow_dispatch:
   pull_request:
-    branches: ["master"]
+    branches: ["main"]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
       - "src/**"
-      - ".cargo/**"
-      - ".github/workflows/check.yml"
+      - "tests/**"
+      - ".github/workflows/test.yml"
   push:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
       - "src/**"
-      - ".cargo/**"
-      - ".github/workflows/check.yml"
+      - "tests/**"
+      - ".github/workflows/test.yml"
 
 jobs:
   treewide-checks:

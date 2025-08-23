@@ -8,14 +8,14 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "src/**"
-      - ".cargo/**"
+      - "tests/**"
       - ".github/workflows/check.yml"
   push:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
       - "src/**"
-      - ".cargo/**"
+      - "tests/**"
       - ".github/workflows/check.yml"
 
 jobs:

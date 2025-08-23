@@ -1,4 +1,4 @@
-name: Documentation
+name: "Build & Deploy Documentation"
 
 on:
   push:
