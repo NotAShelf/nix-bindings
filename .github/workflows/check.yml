@@ -1,0 +1,54 @@
+name: "Check formating & lints"
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["master"]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - ".cargo/**"
+      - ".github/workflows/check.yml"
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - ".cargo/**"
+      - ".github/workflows/check.yml"
+
+jobs:
+  treewide-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check formatting
+        run: |
+          eval "$(nix print-dev-env)"
+          set -x
+
+          # Verify that Rust source code is formatted
+          cargo fmt --check || exit 1
+
+          # Verify that TOML files are formatted
+          taplo fmt --check || exit 1
+
+      - name: Clippy Lints
+        run: |
+          eval "$(nix print-dev-env)"
+          set -x
+
+          # Lint Changes
+          cargo clippy -- \
+            -W clippy::pedantic \
+            -W clippy::correctness \
+            -W clippy::suspicious
+

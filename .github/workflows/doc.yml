@@ -27,25 +27,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure cache
-        uses: Swatinem/rust-cache@v2
+      # Check if the source code is formatted as per the tooling configurations
+      # in the repository root. Unlike the Clippy lints below, formatting lints
+      # **must** pass.
+      - name: Prepare Dev Environment
+        run: |
+          eval "$(nix print-dev-env)"
+          set -x
+
+          cargo clean --doc ; cargo doc --no-deps --workspace --all-features
+
+          # Add redirect
+          echo '<meta http-equiv="refresh" content="0;url=nix-bindings/index.html">' > target/doc/index.html
+
+      - name: Remove lock file
+        run: rm target/doc/.lock
 
       - name: Setup pages
         id: pages
         uses: actions/configure-pages@v5
-
-      - name: Build Documentation
-        run: |
-          cargo clean --doc ; cargo doc --no-deps --workspace --all-features
-
-      - name: Add redirect
-        run: echo '<meta http-equiv="refresh" content="0;url=nix-bindings/index.html">' > target/doc/index.html
-
-      - name: Remove lock file
-        run: rm target/doc/.lock
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
