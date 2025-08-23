@@ -75,12 +75,7 @@ fn store_get_uri_and_storedir() {
         assert!(!store.is_null());
 
         let mut uri: Option<String> = None;
-        let res = nix_store_get_uri(
-            ctx,
-            store,
-            Some(string_callback),
-            (&raw mut uri).cast(),
-        );
+        let res = nix_store_get_uri(ctx, store, Some(string_callback), (&raw mut uri).cast());
         assert_eq!(res, nix_err_NIX_OK);
         assert!(uri.is_some());
 
