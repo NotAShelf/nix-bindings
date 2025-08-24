@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
     // Tell cargo to invalidate the built crate whenever the wrapper changes
@@ -10,9 +10,25 @@ fn main() {
     println!("cargo:rustc-link-lib=nixexprc");
     println!("cargo:rustc-link-lib=archive");
 
+    // Detect Nix version using pkg-config
+    let nix_version = {
+        let output = Command::new("pkg-config")
+            .args(&["--modversion", "nix-store"])
+            .output()
+            .expect("Failed to get nix version");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+
+    // Parse version into v{major}_{minor} for versioned module naming
+    let version_mod = {
+        let mut parts = nix_version.split('.');
+        let major = parts.next().unwrap_or("0");
+        let minor = parts.next().unwrap_or("0");
+        format!("v{}_{}", major, minor)
+    };
+
     // Use pkg-config to find nix-store include and link paths
-    // This NEEDS to be included, or otherwise `nix_api_store.h` cannot
-    // be found.
+    // This NEEDS to be included, or otherwise `nix_api_store.h` cannot be found.
     let lib = pkg_config::Config::new()
         .atleast_version("2.0.0")
         .probe("nix-store")
@@ -38,10 +54,41 @@ fn main() {
     }
     builder = builder.clang_arg(format!("-I{gcc_include}"));
 
-    // Write the bindings to the $OUT_DIR/bindings.rs file
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    // Write the bindings to $OUT_DIR/v{major}_{minor}/bindings.rs
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let versioned_dir = out_dir.join(&version_mod);
+    fs::create_dir_all(&versioned_dir).expect("Failed to create versioned bindings dir");
     let bindings = builder.generate().expect("Unable to generate bindings");
     bindings
-        .write_to_file(out_path.join("bindings.rs"))
-        .expect("Couldn't write bindings!");
+        .write_to_file(versioned_dir.join("bindings.rs"))
+        .expect("Couldn't write versioned bindings!");
+
+    // Write a versioned mod.rs to $OUT_DIR/v{major}_{minor}/mod.rs
+    // This allows the versioned module to be included from OUT_DIR
+    let mod_rs = versioned_dir.join("mod.rs");
+    fs::write(
+        &mod_rs,
+        format!(
+            r#"
+#[allow(non_upper_case_globals)]
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
+pub const NIX_BINDINGS_VERSION: &str = "{nix_version}";
+pub mod bindings {{
+    include!(concat!(env!("OUT_DIR"), "/{version_mod}/bindings.rs"));
+}}
+pub use bindings::*;
+"#
+        ),
+    )
+    .expect("Couldn't write versioned mod.rs");
+
+    // Write a top-level versions_mod.rs to $OUT_DIR that exposes the versioned module
+    // This is included by src/lib.rs to re-export the correct version
+    let versions_mod_rs = out_dir.join("versions_mod.rs");
+    fs::write(
+        &versions_mod_rs,
+        format!("pub mod {ver}; pub use {ver}::*;", ver = version_mod),
+    )
+    .expect("Couldn't write versions_mod.rs");
 }
