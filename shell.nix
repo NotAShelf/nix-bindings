@@ -1,5 +1,9 @@
 {pkgs ? import <nixpkgs> {}}: let
-  nixForBindings = pkgs.nixVersions.nix_2_28;
+  nixForBindings = [
+    pkgs.nixVersions.nix_2_28
+    pkgs.nixVersions.nix_2_29
+    pkgs.nixVersions.latest
+  ];
 in
   pkgs.mkShell {
     name = "nix-bindings";
@@ -14,12 +18,12 @@ in
       lldb
     ];
 
-    nativeBuildInputs = with pkgs; [
-      nixForBindings.dev
-      pkg-config
-      glibc.dev
-      #gcc
-    ];
+    nativeBuildInputs =
+      (with pkgs; [
+        pkg-config
+        glibc.dev
+      ])
+      ++ map (nix: nix.dev) nixForBindings;
 
     env = {
       RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
