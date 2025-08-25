@@ -8,35 +8,46 @@ Rust FFI bindings for the [Nix C API].
 
 [Nix]: https://nixos.or
 [rust-bindgen]: https://github.com/rust-lang/rust-bindgen
+[more accessible documentation]: https://notashelf.github.io/nix-bindings/nix_bindings/bindings/index.html
 
 **nix-bindings** provides safe(ish), idiomatic Rust bindings to the [Nix] build
-tool's experimental C API. This enables direct, programmatic access to Nix store
-operations, evaluation, and error handling from Rust, without shelling out to
-the Nix CLI or depending on unstable C++ APIs.
+tool's experimental C API with [more accessible documentation]. [^1] This
+enables direct, programmatic access to Nix store operations, evaluation, and
+error handling from Rust, without shelling out to the Nix CLI or depending on
+unstable (or inaccessible) C++ APIs.
+
+[^1]: Work in progress.
 
 Bindings are generated using [rust-bindgen] and cover all public Nix C API
-headers, including store, evaluator, value, error, and flake support.
+headers, including store, evaluator, value, error, and flake support. Due to the
+limitations of rust-bindgen, there is no compatibility outside the public C API.
+See [this blog post](https://fzakaria.com/2025/08/17/using-nix-as-a-library) for
+instructions on using Nix as a library in C++ projects.
 
 ## Features
 
-This crate is limited with the features of the C API, which is mostly documented
-and hidden away for the time being. Regardless, some of features provided by
-this crate (following the C API) are as follows:
+This crate is limited with the features of the C API, which is mostly
+undocumented and hidden away for the time being. Regardless, some of features
+provided by this crate (following the C API) are as follows:
 
 - Open and interact with Nix stores (`nix_store_open`, `nix_store_realise`,
   etc.)
 - Evaluate Nix expressions and call Nix functions (`nix_expr_eval_from_string`,
   `nix_value_call`, etc.)
+
+Additionally, with limited success:
+
 - Manipulate store paths and values
 - Access and set Nix configuration settings
 - Retrieve and handle errors programmatically
 
-I have also elected to add a test suite (work in progress) and some real-world
+On a different note, I have elected to add a test suite [^2] and some real-world
 usage examples. While upstream does not promise stability, we are adding some
 safety around what is available for (hopefully) nicer interactions with Nix as a
-library.
+library. Those are manually written for available bindings based on the C
+headers.
 
----
+[^2]: Also work in progress. Not all APIs are tested.
 
 ## Usage
 
@@ -50,9 +61,7 @@ nix-bindings = { path = "./nix-bindings" }
 You must have a compatible version of the Nix C API and development headers
 installed. The build script uses `pkg-config` to locate the necessary libraries
 and headers. You can take a look at the default Nix shell to get an idea of what
-is available.
-
----
+dependencies are required to build the bindings.
 
 ## Examples
 
@@ -91,8 +100,6 @@ The tests suite is available in the tests directory, and can be ran easily with
 
 Tests currently cover store operations, context management, configuration, and
 more. All tests are integration-style and interact with a real Nix installation.
-
----
 
 ## Contributing
 
