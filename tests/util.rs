@@ -37,8 +37,7 @@ fn version_get() {
         assert!(!version.is_empty(), "Version string should not be empty");
         assert!(
             version.chars().next().unwrap().is_ascii_digit(),
-            "Version string should start with a digit: {}",
-            version
+            "Version string should start with a digit: {version}"
         );
     }
 }
