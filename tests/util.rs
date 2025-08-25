@@ -93,3 +93,64 @@ fn setting_set_and_get() {
     nix_c_context_free(ctx);
   }
 }
+
+#[test]
+#[serial]
+fn error_handling_apis() {
+  unsafe extern "C" fn string_callback(
+    start: *const ::std::os::raw::c_char,
+    n: ::std::os::raw::c_uint,
+    user_data: *mut ::std::os::raw::c_void,
+  ) {
+    let s =
+      unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
+    let s = std::str::from_utf8(s).unwrap();
+    let out = user_data.cast::<Option<String>>();
+    *unsafe { &mut *out } = Some(s.to_string());
+  }
+
+  unsafe {
+    let ctx = nix_c_context_create();
+    assert!(!ctx.is_null());
+    let err = nix_libutil_init(ctx);
+    assert_eq!(err, nix_err_NIX_OK);
+
+    // Set an error message
+    let msg = CString::new("custom error message").unwrap();
+    let set_err = nix_set_err_msg(ctx, nix_err_NIX_ERR_UNKNOWN, msg.as_ptr());
+    assert_eq!(set_err, nix_err_NIX_ERR_UNKNOWN);
+
+    // Get error code
+    let code = nix_err_code(ctx);
+    assert_eq!(code, nix_err_NIX_ERR_UNKNOWN);
+
+    // Get error message
+    let mut len: std::os::raw::c_uint = 0;
+    let err_msg_ptr = nix_err_msg(ctx, ctx, &mut len as *mut _);
+    if !err_msg_ptr.is_null() && len > 0 {
+      let err_msg = std::str::from_utf8(std::slice::from_raw_parts(
+        err_msg_ptr as *const u8,
+        len as usize,
+      ))
+      .unwrap();
+      assert!(err_msg.contains("custom error message"));
+    }
+
+    // Get error info message (should work, but may be empty)
+    let mut info: Option<String> = None;
+    let _ =
+      nix_err_info_msg(ctx, ctx, Some(string_callback), (&raw mut info).cast());
+
+    // Get error name (should work, but may be empty)
+    let mut name: Option<String> = None;
+    let _ =
+      nix_err_name(ctx, ctx, Some(string_callback), (&raw mut name).cast());
+
+    // Clear error
+    nix_clear_err(ctx);
+    let code_after_clear = nix_err_code(ctx);
+    assert_eq!(code_after_clear, nix_err_NIX_OK);
+
+    nix_c_context_free(ctx);
+  }
+}
