@@ -43,7 +43,7 @@ Additionally, with limited success nix-bindings allows you to:
 
 using the generated Rust bindings.
 
-> [!INFO]
+> [!NOTE]
 > I have elected to add a test suite [^2] and some real-world usage examples.
 > While upstream does not promise stability, we are adding some safety around
 > what is available for (hopefully) nicer interactions with Nix as a library.
