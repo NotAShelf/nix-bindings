@@ -6,7 +6,7 @@ edition      = "2024"
 version      = "2.28.4"                                    # after the Nix version bindings were made with.
 readme       = true
 repository   = "https://github.com/notashelf/nix-bindings"
-rust-version = "1.70"
+rust-version = "1.85"
 
 [lib]
 path = "src/lib.rs"
