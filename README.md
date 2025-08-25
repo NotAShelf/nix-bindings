@@ -10,11 +10,11 @@ Rust FFI bindings for the [Nix C API].
 [rust-bindgen]: https://github.com/rust-lang/rust-bindgen
 [more accessible documentation]: https://notashelf.github.io/nix-bindings/nix_bindings/bindings/index.html
 
-**nix-bindings** provides safe(ish), idiomatic Rust bindings to the [Nix] build
-tool's experimental C API with [more accessible documentation]. [^1] This
-enables direct, programmatic access to Nix store operations, evaluation, and
-error handling from Rust, without shelling out to the Nix CLI or depending on
-unstable (or inaccessible) C++ APIs.
+**nix-bindings** provides safe(ish), tested, idiomatic Rust bindings to the
+[Nix] build tool's experimental C API with [more accessible documentation]. [^1]
+This enables direct, programmatic access to Nix store operations, evaluation,
+and error handling from Rust, without shelling out to the Nix CLI or depending
+on unstable (or inaccessible) C++ APIs.
 
 [^1]: Work in progress.
 
@@ -35,71 +35,63 @@ provided by this crate (following the C API) are as follows:
 - Evaluate Nix expressions and call Nix functions (`nix_expr_eval_from_string`,
   `nix_value_call`, etc.)
 
-Additionally, with limited success:
+Additionally, with limited success nix-bindings allows you to:
 
 - Manipulate store paths and values
 - Access and set Nix configuration settings
 - Retrieve and handle errors programmatically
 
-On a different note, I have elected to add a test suite [^2] and some real-world
-usage examples. While upstream does not promise stability, we are adding some
-safety around what is available for (hopefully) nicer interactions with Nix as a
-library. Those are manually written for available bindings based on the C
-headers.
+using the generated Rust bindings.
+
+> [!INFO]
+> I have elected to add a test suite [^2] and some real-world usage examples.
+> While upstream does not promise stability, we are adding some safety around
+> what is available for (hopefully) nicer interactions with Nix as a library.
+> Those are manually written for available bindings based on the C headers.
 
 [^2]: Also work in progress. Not all APIs are tested.
 
 ## Usage
 
-Add this crate to your `Cargo.toml` (local path or git, as appropriate):
+Add nix-bindings to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-nix-bindings = { path = "./nix-bindings" }
+nix-bindings = "2.28.4" # your Nix version must match the crate version.
 ```
 
-You must have a compatible version of the Nix C API and development headers
-installed. The build script uses `pkg-config` to locate the necessary libraries
-and headers. You can take a look at the default Nix shell to get an idea of what
-dependencies are required to build the bindings.
+You might also use a local path or Git as appropriate.
+
+Do note that you _must_ have a compatible version of the Nix C API and
+development headers available. The build script uses `pkg-config` to locate the
+necessary libraries and headers from the environment, which is bootstrapped
+using Nix. You may look into `shell.nix` to gen an idea of what is required to
+build nix-bindings. Please do not create issues for build errors unless you have
+verified that your environment setup is correct.
 
 ## Examples
 
-See the [`examples/`](./examples) directory for small, self-contained usage
-examples.
-
-### Print Nix Library Version
-
-```rust
-use nix_bindings::nix_version_get;
-use std::ffi::CStr;
-
-fn main() {
-    unsafe {
-        let version_ptr = nix_version_get();
-        if version_ptr.is_null() {
-            eprintln!("Failed to get Nix version");
-            std::process::exit(1);
-        }
-        let version = CStr::from_ptr(version_ptr).to_string_lossy();
-        println!("Nix library version: {}", version);
-    }
-}
-```
-
-Run with:
-
-```sh
-cargo run --example version
-```
+There are several examples provided [`examples/`](./examples) directory to serve
+as small, self-contained examples in case you decide to use this crate. You may
+run them with `cargo run --example <example>`, e.g.,
+`cargo run --example eval_basic`. In addition to providing results, the code in
+the examples directory can help guide you to use this library.
 
 ## Testing
 
-The tests suite is available in the tests directory, and can be ran easily with
-`cargo test`.
+nix-bindings is meticulously tested for the sake of added safety and soundness
+on top of the C API. The test suite is available in the [`tests/`](./tests)
+directory and can be ran easily using `cargo test`. For the time being the tests
+cover:
 
-Tests currently cover store operations, context management, configuration, and
-more. All tests are integration-style and interact with a real Nix installation.
+- Store operations
+- Context management
+- Configuration
+- Expression evaluation
+
+The tests are intergration style, and interact with a real Nix installation. If
+you believe a case is not appropriately tested, please create an issue. PRs are
+also welcome to extend test cases :)
 
 ## Contributing
 
@@ -121,9 +113,13 @@ missing C testing, but it will make our lives easier in identifying the issue.
 
 There are some caveats with this library. Namely, the C API is still unstable
 and incomplete. Not everything is directly available, and we are severely
-limited by what upstream provides to us. This also means that not all CLI
-features are exposed. Some advanced or experimental features may require
-additional or upstreaming work.
+limited by what upstream provides to us. Upstream calls this API "C API with the
+intent of becoming a stable API, which it is currently not." See the
+[relevant section in the Nix manua](https://nix.dev/manual/nix/2.30/c-api) for
+more details and appropriate communication channels.
+
+This also means that not all CLI features are exposed. Some advanced or
+experimental features may require additional or upstreaming work.
 
 ## License
 
