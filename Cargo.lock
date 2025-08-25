@@ -242,7 +242,6 @@ version = "2.28.4"
 dependencies = [
  "bindgen",
  "pkg-config",
- "prettyplease",
  "serial_test",
 ]
 
