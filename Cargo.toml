@@ -12,8 +12,9 @@ rust-version = "1.85"
 path = "src/lib.rs"
 
 [build-dependencies]
-bindgen    = "0.72.0"
+bindgen = { version = "0.72.0", default-features = false, features = ["logging", "runtime"] }
 pkg-config = "0.3.32"
+doxygen-bindgen = "0.1.3"
 
 [dev-dependencies]
 serial_test = "3.2.0"

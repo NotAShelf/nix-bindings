@@ -1,5 +1,24 @@
 use std::{env, path::PathBuf, process::Command};
 
+use bindgen::callbacks::ParseCallbacks;
+
+#[derive(Debug)]
+struct ProcessComments;
+
+impl ParseCallbacks for ProcessComments {
+  fn process_comment(&self, comment: &str) -> Option<String> {
+    match doxygen_bindgen::transform(comment) {
+      Ok(res) => Some(res),
+      Err(err) => {
+        println!(
+          "cargo:warning=Problem processing doxygen comment: {comment}\n{err}"
+        );
+        None
+      },
+    }
+  }
+}
+
 fn main() {
   // Tell cargo to invalidate the built crate whenever the wrapper changes
   println!("cargo:rerun-if-changed=wrapper.h");
@@ -31,7 +50,8 @@ fn main() {
     .header("wrapper.h")
     .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
     .formatter(bindgen::Formatter::Rustfmt)
-    .rustfmt_configuration_file(std::fs::canonicalize(".rustfmt.toml").ok());
+    .rustfmt_configuration_file(std::fs::canonicalize(".rustfmt.toml").ok())
+    .parse_callbacks(Box::new(ProcessComments));
 
   // Add all pkg-config include paths and GCC's include path to bindgen
   for include_path in &lib.include_paths {
