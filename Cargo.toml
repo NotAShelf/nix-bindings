@@ -12,7 +12,7 @@ rust-version = "1.85"
 path = "src/lib.rs"
 
 [build-dependencies]
-bindgen = { version = "0.72.0", default-features = false, features = ["logging", "runtime"] }
+bindgen = { version = "0.72.1", default-features = false, features = ["logging", "runtime"] }
 pkg-config = "0.3.32"
 doxygen-bindgen = "0.1.3"
 
