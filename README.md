@@ -115,7 +115,7 @@ There are some caveats with this library. Namely, the C API is still unstable
 and incomplete. Not everything is directly available, and we are severely
 limited by what upstream provides to us. Upstream calls this API "C API with the
 intent of becoming a stable API, which it is currently not." See the
-[relevant section in the Nix manua](https://nix.dev/manual/nix/2.30/c-api) for
+[relevant section in the Nix manual](https://nix.dev/manual/nix/2.30/c-api) for
 more details and appropriate communication channels.
 
 This also means that not all CLI features are exposed. Some advanced or
