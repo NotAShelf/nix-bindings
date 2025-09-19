@@ -4,7 +4,7 @@ use std::{
   ptr,
 };
 
-use nix_bindings::sys::{
+use nix_bindings_sys::{
   ValueType_NIX_TYPE_INT,
   nix_alloc_value,
   nix_c_context_create,
