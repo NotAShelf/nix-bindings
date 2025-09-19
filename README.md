@@ -9,40 +9,58 @@ Rust FFI bindings for the [Nix C API].
 [Nix]: https://nixos.or
 [rust-bindgen]: https://github.com/rust-lang/rust-bindgen
 [more accessible documentation]: https://notashelf.github.io/nix-bindings/nix_bindings/bindings/index.html
+[this blog post]: https://fzakaria.com/2025/08/17/using-nix-as-a-library
+[discouraged by Bindgen]: https://rust-lang.github.io/rust-bindgen/cpp.html
 
-**nix-bindings** provides safe(ish), tested, idiomatic Rust bindings to the
-[Nix] build tool's experimental C API with [more accessible documentation]. [^1]
-This enables direct, programmatic access to Nix store operations, evaluation,
-and error handling from Rust, without shelling out to the Nix CLI or depending
-on unstable (or inaccessible) C++ APIs.
+**nix-bindings** is a Rust crate that provides safe(ish), tested and idiomatic
+Rust bindings for the [Nix] build tool's experimental C API with
+[more accessible documentation]. [^1]
 
 [^1]: Work in progress.
 
-Bindings are generated using [rust-bindgen] and cover all public Nix C API
-headers, including store, evaluator, value, error, and flake support. Due to the
-limitations of rust-bindgen, there is no compatibility outside the public C API.
-See [this blog post](https://fzakaria.com/2025/08/17/using-nix-as-a-library) for
-instructions on using Nix as a library in C++ projects.
+The goal of this repository is to ultimately use those low-level bindings that
+provide direct, programmatic access to Nix store operations from Rust and use
+them to construct a safe, high-level API to interact with Nix without ever
+shelling out to the Nix CLI.
+
+The **low-level** bindings located in `nix_bindings_sys` (or
+`nix_bindings::sys`)are generated using [rust-bindgen] and cover all public Nix
+C API headers, including store, evaluator, value, error, and flake support.
+
+Due to the limitations of rust-bindgen, there is no compatibility outside the
+public C API. As much as I would love to provide bindings for the C++ APIs, this
+seems very annoying and is [discouraged by Bindgen]. For interacting with C++
+APIs, you might want to use C++ directly. See [this blog post] that inspired
+this repository for instructions on using Nix as a library in C++ projects.
 
 ### Repository Layout
 
-> [!NOTE]
+> [!WARNING]
 > The raw, unsafe FFI bindings are now located in the
 > [`nix-bindings-sys`](./nix-bindings-sys/) crate directory. All low-level C API
-> bindings and build logic are maintained there.
+> bindings and build logic are maintained there. This warning is placed in case
+> you have previously accessed the low-level wrappers from the top-level. Most
+> functions have been moved to `nix_bindings_sys` crate re-exported by
+> nix-bindings.
 
-This crate has been structured to allow providing safe and unsafe bindings at
-the same time, through different subcrates. At the moment the crate layout is as
-follows:
+This crate has been structured in a way that allows providing safe and unsafe
+bindings at the same time, through different subcrates. At the moment the crate
+layout is as follows:
 
-- `nix-bindings-sys/`: Raw, unsafe FFI bindings to the Nix C API
-- (future) `nix-bindings/`: High-level, safe Rust API built on top of
-  `nix-bindings-sys`
+```plaintext
+.
+├── nix-bindings-sys # raw, unsafe FFI bindings to the Nix C API
+└── nix-bindings # high-level, safe Rust API built on top of `nix-bindings-sys`
+```
 
-The sys crate contains the build wrapper and the generated bindings. The
-bindings are exposed at the topmost level as `nix_bindings::sys`.
+The `nix-bindings-sys` crate contains the build wrapper (`build.rs`), as well as
+tests and examples to demonstrate interacting with the generated bindings. Those
+tests and examples are expected to pass, and they serve as a safeguard for when
+API changes lead to breakage.
 
-## Features
+### High-level Bindings: `nix-bindings-sys`
+
+#### Features
 
 This crate is limited with the features of the C API, which is mostly
 undocumented and hidden away for the time being. Regardless, some of features
@@ -67,9 +85,10 @@ using the generated Rust bindings.
 > what is available for (hopefully) nicer interactions with Nix as a library.
 > Those are manually written for available bindings based on the C headers.
 
-[^2]: Also work in progress. Not all APIs are tested.
+[^2]: Also work in progress. Not all APIs are tested but I'd say around 95% of
+    the bindings are properly tested.
 
-## Usage
+#### Usage
 
 Add nix-bindings to your `Cargo.toml`:
 
@@ -87,27 +106,28 @@ using Nix. You may look into `shell.nix` to gen an idea of what is required to
 build nix-bindings. Please do not create issues for build errors unless you have
 verified that your environment setup is correct.
 
-## Examples
+#### Examples
 
-There are several examples provided [`examples/`](./examples) directory to serve
-as small, self-contained examples in case you decide to use this crate. You may
-run them with `cargo run --example <example>`, e.g.,
+There are several examples provided [`examples/`](./nix-bindings-sys/examples)
+directory to serve as small, self-contained examples in case you decide to use
+this crate. You may run them with `cargo run --example <example>`, e.g.,
 `cargo run --example eval_basic`. In addition to providing results, the code in
 the examples directory can help guide you to use this library.
 
-## Testing
+#### Testing
 
-nix-bindings is meticulously tested for the sake of added safety and soundness
-on top of the C API. The test suite is available in the [`tests/`](./tests)
-directory and can be ran easily using `cargo test`. For the time being the tests
-cover:
+nix-bindings-sys is _meticulously_ tested for the sake of added safety and
+soundness on top of the C API. The test suite is available in the
+[`tests/`](./nix-bindings-sys/tests) directory and can be ran easily using
+`cargo test`. For the time being the tests cover:
 
 - Store operations
 - Context management
 - Configuration
 - Expression evaluation
+- Thunks
 
-The tests are intergration style, and interact with a real Nix installation. If
+The tests are integration style, and interact with a real Nix installation. If
 you believe a case is not appropriately tested, please create an issue. PRs are
 also welcome to extend test cases :)
 
