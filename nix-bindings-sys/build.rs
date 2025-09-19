@@ -21,7 +21,7 @@ impl ParseCallbacks for ProcessComments {
 
 fn main() {
   // Tell cargo to invalidate the built crate whenever the wrapper changes
-  println!("cargo:rerun-if-changed=wrapper.h");
+  println!("cargo:rerun-if-changed=include/wrapper.h");
 
   // We must also link the required libraries for the C API symbols (in *c.so)
   println!("cargo:rustc-link-lib=nixstorec");
@@ -47,7 +47,7 @@ fn main() {
 
   // The bindgen::Builder is the main entry point to bindgen
   let mut builder = bindgen::Builder::default()
-    .header("wrapper.h")
+    .header("include/wrapper.h")
     .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
     .formatter(bindgen::Formatter::Rustfmt)
     .rustfmt_configuration_file(std::fs::canonicalize(".rustfmt.toml").ok())
