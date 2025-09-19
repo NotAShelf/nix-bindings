@@ -2,7 +2,7 @@
 
 use std::ffi::{CStr, CString};
 
-use nix_bindings::*;
+use nix_bindings_sys::*;
 use serial_test::serial;
 
 #[test]

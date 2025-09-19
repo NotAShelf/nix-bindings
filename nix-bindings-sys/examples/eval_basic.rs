@@ -6,7 +6,7 @@ use std::{
   ptr,
 };
 
-use nix_bindings::{
+use nix_bindings::sys::{
   ValueType_NIX_TYPE_ATTRS,
   ValueType_NIX_TYPE_INT,
   ValueType_NIX_TYPE_LIST,
