@@ -16,7 +16,7 @@ rust-version = "1.85"
 license      = "MIT"
 
 [lib]
-path = "src/lib.rs"
+path = "lib.rs"
 
 [dependencies]
 nix-bindings-sys = { path = "nix-bindings-sys", version = "2.28.5" }
