@@ -23,7 +23,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Nix and Nix C API headers
+      - name: Install Nix
         uses: cachix/install-nix-action@master
         with:
           nix_path: nixpkgs=channel:nixos-25.11
