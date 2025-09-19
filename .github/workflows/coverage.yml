@@ -30,7 +30,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          nix profile add nixpkgs#pkg-config nixpkgs#gcc nixpkgs#doxygen
+          nix profile add nixpkgs#pkg-config nixpkgs#gcc nixpkgs#doxygen nixpkgs#nix
 
       - name: Install Rust toolchain (nightly, for coverage)
         uses: dtolnay/rust-toolchain@nightly
@@ -45,6 +45,7 @@ jobs:
       - name: Generate coverage report
         working-directory: nix-bindings-sys
         run: |
+          export PKG_CONFIG_PATH=$(nix eval --raw nixpkgs.nix.dev)/lib/pkgconfig:$PKG_CONFIG_PATH
           cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage artifact
