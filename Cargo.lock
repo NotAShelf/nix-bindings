@@ -223,6 +223,14 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 name = "nix-bindings"
 version = "2.28.5"
 dependencies = [
+ "nix-bindings-sys",
+ "serial_test",
+]
+
+[[package]]
+name = "nix-bindings-sys"
+version = "2.28.5"
+dependencies = [
  "bindgen",
  "doxygen-bindgen",
  "pkg-config",

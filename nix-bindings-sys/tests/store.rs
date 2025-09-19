@@ -2,7 +2,7 @@
 
 use std::{ffi::CString, ptr};
 
-use nix_bindings::*;
+use nix_bindings_sys::*;
 use serial_test::serial;
 
 #[test]

@@ -1,0 +1,77 @@
+name: Coverage (nix-bindings-sys)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'nix-bindings-sys/**'
+      - '.github/workflows/coverage.yml'
+  pull_request:
+    paths:
+      - 'nix-bindings-sys/**'
+      - '.github/workflows/coverage.yml'
+
+jobs:
+  coverage:
+    name: Coverage Report (nix-bindings-sys)
+    runs-on: ubuntu-latest
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@master
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+
+      # FIXME: I hate nix-env, but nix develop doesn't actually work here.
+      - name: Install build dependencies
+        run: |
+          nix-env -iA nixpkgs.pkg-config nixpkgs.gcc nixpkgs.doxygen
+
+      - name: Install Rust toolchain (nightly, for coverage)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate coverage report
+        working-directory: nix-bindings-sys
+        run: |
+          cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: nix-bindings-sys/lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: nix-bindings-sys/lcov.info
+          flags: sys
+          name: codecov-nix-bindings-sys
+          fail_ci_if_error: false
+
+      - name: Coverage summary
+        working-directory: nix-bindings-sys
+        run: |
+          cargo llvm-cov report --all-features --workspace --summary-only
+
+      - name: Check Nix header coverage
+        working-directory: nix-bindings-sys
+        run: |
+          echo "## Nix Header Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This workflow measures how much of the Nix C API headers are covered by the generated Rust bindings and tests." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See the lcov.info artifact and Codecov for detailed results."

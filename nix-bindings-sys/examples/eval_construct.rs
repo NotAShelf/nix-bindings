@@ -3,7 +3,7 @@ use std::{
   ptr,
 };
 
-use nix_bindings::{
+use nix_bindings_sys::{
   ValueType_NIX_TYPE_INT,
   ValueType_NIX_TYPE_STRING,
   nix_alloc_value,

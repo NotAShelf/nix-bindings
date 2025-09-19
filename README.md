@@ -24,6 +24,24 @@ limitations of rust-bindgen, there is no compatibility outside the public C API.
 See [this blog post](https://fzakaria.com/2025/08/17/using-nix-as-a-library) for
 instructions on using Nix as a library in C++ projects.
 
+### Repository Layout
+
+> [!NOTE]
+> The raw, unsafe FFI bindings are now located in the
+> [`nix-bindings-sys`](./nix-bindings-sys/) crate directory. All low-level C API
+> bindings and build logic are maintained there.
+
+This crate has been structured to allow providing safe and unsafe bindings at
+the same time, through different subcrates. At the moment the crate layout is as
+follows:
+
+- `nix-bindings-sys/`: Raw, unsafe FFI bindings to the Nix C API
+- (future) `nix-bindings/`: High-level, safe Rust API built on top of
+  `nix-bindings-sys`
+
+The sys crate contains the build wrapper and the generated bindings. The
+bindings are exposed at the topmost level as `nix_bindings::sys`.
+
 ## Features
 
 This crate is limited with the features of the C API, which is mostly

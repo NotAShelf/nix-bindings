@@ -1,6 +1,6 @@
 use std::ffi::CStr;
 
-use nix_bindings::nix_version_get;
+use nix_bindings_sys::nix_version_get;
 
 fn main() {
   unsafe {
