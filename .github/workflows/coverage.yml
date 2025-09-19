@@ -53,6 +53,9 @@ jobs:
       - name: Coverage summary
         working-directory: nix-bindings-sys
         run: |
+          eval "$(nix print-dev-env)"
+          set -x
+
           cargo llvm-cov report --all-features --workspace --summary-only
 
       - name: Check Nix header coverage
