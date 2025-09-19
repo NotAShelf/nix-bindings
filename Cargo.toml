@@ -1,8 +1,5 @@
 [workspace]
-members = [
-    ".",
-    "nix-bindings-sys"
-]
+members = [ ".", "nix-bindings-sys" ]
 
 [package]
 name         = "nix-bindings"
