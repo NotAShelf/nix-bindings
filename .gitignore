@@ -1,4 +1,17 @@
-**/target/
-**/.direnv/
-**/include/
-!/nix-bindings-sys/include
+# Ignore everything by default
+/*
+!/
+
+!/nix-bindings-sys
+!/tests
+!/src
+
+# Configuration files
+!/.config/
+!/.rustfmt.toml
+!/.clippy.toml
+!/.taplo.toml
+!/.gitattributes
+!/.gitignore
+!/.github
+!/.editorconfig
