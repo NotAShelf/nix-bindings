@@ -52,24 +52,26 @@ unsafe fn print_attrset(
     );
     return;
   }
-  let attr_count = nix_get_attrs_size(ctx, attrset);
+  let attr_count = unsafe { nix_get_attrs_size(ctx, attrset) };
   for i in 0..attr_count {
     let mut name_ptr: *const std::os::raw::c_char = ptr::null();
-    let attr_val = nix_bindings_sys::nix_get_attr_byidx(
-      ctx,
-      attrset,
-      state,
-      i,
-      &mut name_ptr,
-    );
+    let attr_val = unsafe {
+      nix_bindings_sys::nix_get_attr_byidx(
+        ctx,
+        attrset,
+        state,
+        i,
+        &mut name_ptr,
+      )
+    };
     if attr_val.is_null() || name_ptr.is_null() {
       println!("{:indent$}[invalid attr]", "", indent = indent);
       continue;
     }
-    let name = CStr::from_ptr(name_ptr).to_string_lossy();
-    let typ = nix_get_type(ctx, attr_val);
-    let type_name =
-      CStr::from_ptr(nix_get_typename(ctx, attr_val)).to_string_lossy();
+    let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
+    let typ = unsafe { nix_get_type(ctx, attr_val) };
+    let type_name = unsafe { CStr::from_ptr(nix_get_typename(ctx, attr_val)) }
+      .to_string_lossy();
     print!("{:indent$}{}: {} (", "", name, type_name, indent = indent);
     match typ {
       nix_bindings_sys::ValueType_NIX_TYPE_STRING => {
@@ -86,28 +88,30 @@ unsafe fn print_attrset(
           unsafe { *out = Some(s.to_string()) };
         }
         let mut got: Option<String> = None;
-        let _ = nix_get_string(
-          ctx,
-          attr_val,
-          Some(string_cb),
-          &mut got as *mut Option<String> as *mut std::ffi::c_void,
-        );
+        let _ = unsafe {
+          nix_get_string(
+            ctx,
+            attr_val,
+            Some(string_cb),
+            &mut got as *mut Option<String> as *mut std::ffi::c_void,
+          )
+        };
         println!("{:?})", got.as_deref().unwrap_or("[invalid utf8]"));
       },
       nix_bindings_sys::ValueType_NIX_TYPE_ATTRS => {
         println!();
-        print_attrset(ctx, attr_val, state, indent + 2, depth + 1);
+        unsafe { print_attrset(ctx, attr_val, state, indent + 2, depth + 1) };
         println!("{:indent$})", "", indent = indent);
       },
       nix_bindings_sys::ValueType_NIX_TYPE_LIST => {
-        let len = nix_get_list_size(ctx, attr_val);
+        let len = unsafe { nix_get_list_size(ctx, attr_val) };
         print!("[");
         for j in 0..len {
-          let elem = nix_get_list_byidx(ctx, attr_val, state, j);
+          let elem = unsafe { nix_get_list_byidx(ctx, attr_val, state, j) };
           if elem.is_null() {
             print!("<?>");
           } else {
-            let elem_type = nix_get_type(ctx, elem);
+            let elem_type = unsafe { nix_get_type(ctx, elem) };
             match elem_type {
               nix_bindings_sys::ValueType_NIX_TYPE_STRING => {
                 extern "C" fn string_cb(
@@ -123,25 +127,29 @@ unsafe fn print_attrset(
                   unsafe { *out = Some(s.to_string()) };
                 }
                 let mut got: Option<String> = None;
-                let _ = nix_get_string(
-                  ctx,
-                  elem,
-                  Some(string_cb),
-                  &mut got as *mut Option<String> as *mut std::ffi::c_void,
-                );
+                let _ = unsafe {
+                  nix_get_string(
+                    ctx,
+                    elem,
+                    Some(string_cb),
+                    &mut got as *mut Option<String> as *mut std::ffi::c_void,
+                  )
+                };
                 print!("{:?}", got.as_deref().unwrap_or("[invalid utf8]"));
               },
               nix_bindings_sys::ValueType_NIX_TYPE_INT => {
-                let v = nix_get_int(ctx, elem);
+                let v = unsafe { nix_get_int(ctx, elem) };
                 print!("{}", v);
               },
               nix_bindings_sys::ValueType_NIX_TYPE_BOOL => {
-                let v = nix_get_bool(ctx, elem);
+                let v = unsafe { nix_get_bool(ctx, elem) };
                 print!("{}", v);
               },
               nix_bindings_sys::ValueType_NIX_TYPE_ATTRS => {
                 print!("\n");
-                print_attrset(ctx, elem, state, indent + 4, depth + 1);
+                unsafe {
+                  print_attrset(ctx, elem, state, indent + 4, depth + 1)
+                };
               },
               nix_bindings_sys::ValueType_NIX_TYPE_NULL => {
                 print!("null");
@@ -156,11 +164,11 @@ unsafe fn print_attrset(
         println!("])");
       },
       nix_bindings_sys::ValueType_NIX_TYPE_BOOL => {
-        let v = nix_get_bool(ctx, attr_val);
+        let v = unsafe { nix_get_bool(ctx, attr_val) };
         println!("{})", v);
       },
       nix_bindings_sys::ValueType_NIX_TYPE_INT => {
-        let v = nix_get_int(ctx, attr_val);
+        let v = unsafe { nix_get_int(ctx, attr_val) };
         println!("{})", v);
       },
       nix_bindings_sys::ValueType_NIX_TYPE_NULL => {
