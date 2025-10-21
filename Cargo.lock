@@ -177,9 +177,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.175"
+version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a82ae493e598baaea5209805c49bbf2ea7de956d50d7da0da1164f9c6d28543"
+checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
 
 [[package]]
 name = "libloading"
@@ -190,6 +190,10 @@ dependencies = [
  "cfg-if",
  "windows-link",
 ]
+
+[[package]]
+name = "lix-bindings"
+version = "0.293.0"
 
 [[package]]
 name = "lock_api"
@@ -221,7 +225,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "nix-bindings"
-version = "2.28.5"
+version = "0.285.0"
 dependencies = [
  "nix-bindings-sys",
  "serial_test",
@@ -229,7 +233,7 @@ dependencies = [
 
 [[package]]
 name = "nix-bindings-sys"
-version = "2.28.5"
+version = "0.285.0"
 dependencies = [
  "bindgen",
  "doxygen-bindgen",

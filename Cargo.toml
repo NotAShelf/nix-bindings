@@ -1,22 +1,27 @@
 [workspace]
-members = [ ".", "nix-bindings-sys" ]
+members  = [ "nix-bindings", "lix-bindings", "nix-bindings-sys" ]
+resolver = "3"
 
-[package]
-name         = "nix-bindings"
-description  = "Rust binding for Nix, the build tool"
+[profile.release]
+lto = "thin"
+
+[profile.opt]
+codegen-units = 1
+inherits      = "release"
+lto           = "fat"
+opt-level     = 3
+strip         = true
+
+[workspace.package]
 authors      = [ "NotAShelf <raf@notashelf.dev>" ]
+categories   = [ "api-bindings", "external-ffi-bindings", "development:ffi" ]
+description  = "Rust bindings for the Nix build tool and its various implementations"
 edition      = "2024"
-version      = "2.28.5"                                    # after the Nix version bindings were made with.
+license      = "MIT"
 readme       = true
 repository   = "https://github.com/notashelf/nix-bindings"
 rust-version = "1.85"
-license      = "MIT"
+version      = "25.10.21"                                                             # yy.mm.dd, individual creates are versioned after Nix/Lix versions they were built for
 
-[lib]
-path = "src/lib.rs"
-
-[dependencies]
-nix-bindings-sys = { path = "nix-bindings-sys", version = "2.28.5" }
-
-[dev-dependencies]
-serial_test = "3.2.0"
+[workspace.dependencies]
+nix-bindings-sys = { path = "nix-bindings-sys", version = "0.285.0" }

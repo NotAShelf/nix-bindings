@@ -1,0 +1,13 @@
+[package]
+name                   = "lix-bindings"
+description            = "Independent high-level Rust bindings for the Lix build tool"
+authors.workspace      = true
+edition.workspace      = true
+version                = "0.293.0"
+readme.workspace       = true
+repository.workspace   = true
+rust-version.workspace = true
+license.workspace      = true
+categories.workspace   = true
+
+[dependencies]

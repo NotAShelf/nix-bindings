@@ -2,9 +2,12 @@
 /*
 !/
 
-!/nix-bindings-sys
-!/tests
+!/lix-bindings/
+!/nix-bindings/
+!/nix-bindings-sys/
 !/src
+!/tests
+
 
 # Configuration files
 !/.config/
