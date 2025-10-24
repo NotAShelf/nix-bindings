@@ -1,5 +1,6 @@
 {pkgs ? import <nixpkgs> {}}: let
   nixForBindings = pkgs.nixVersions.nix_2_28;
+  lixForBindings = pkgs.lixPackageSets.lix_2_93;
 in
   pkgs.mkShell {
     name = "nix-bindings";
@@ -18,9 +19,11 @@ in
 
     nativeBuildInputs = with pkgs; [
       nixForBindings.dev
+      lixForBindings.lix.dev
       pkg-config
       glibc.dev
-      #gcc
+      capnproto
+      gcc
     ];
 
     env = let

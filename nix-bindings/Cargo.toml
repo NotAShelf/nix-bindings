@@ -1,0 +1,15 @@
+[package]
+name                 = "nix-bindings"
+repository.workspace = true
+version              = "0.285.0"
+authors.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+description          = "High-level Rust bindings for the Nix build tool"
+publish              = true
+
+[dependencies]
+nix-bindings-sys.workspace = true
+
+[dev-dependencies]
+serial_test = "3.2.0"

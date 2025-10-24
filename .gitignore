@@ -2,9 +2,12 @@
 /*
 !/
 
-!/nix-bindings-sys
-!/tests
+!/lix-bindings/
+!/nix-bindings/
+!/nix-bindings-sys/
 !/src
+!/tests
+
 
 # Configuration files
 !/.config/
@@ -15,3 +18,8 @@
 !/.gitignore
 !/.github
 !/.editorconfig
+
+# Nix
+!/flake.nix
+!/flake.lock
+!/shell.nix
