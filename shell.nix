@@ -22,7 +22,8 @@ in
       lixForBindings.lix.dev
       pkg-config
       glibc.dev
-      #gcc
+      capnproto
+      gcc
     ];
 
     env = let

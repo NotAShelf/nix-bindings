@@ -18,3 +18,8 @@
 !/.gitignore
 !/.github
 !/.editorconfig
+
+# Nix
+!/flake.nix
+!/flake.lock
+!/shell.nix
