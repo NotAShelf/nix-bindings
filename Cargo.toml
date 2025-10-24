@@ -21,7 +21,7 @@ license      = "MIT"
 readme       = true
 repository   = "https://github.com/notashelf/nix-bindings"
 rust-version = "1.85"
-version      = "25.10.21"                                                             # yy.mm.dd, individual creates are versioned after Nix/Lix versions they were built for
+version      = "25.10.24"                                                             # yy.mm.dd
 
 [workspace.dependencies]
 nix-bindings-sys = { path = "nix-bindings-sys", version = "0.285.0" }
