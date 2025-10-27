@@ -37,7 +37,7 @@ jobs:
           cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-lcov
           path: nix-bindings-sys/lcov.info
