@@ -168,6 +168,118 @@ impl Store {
   pub(crate) unsafe fn as_ptr(&self) -> *mut sys::Store {
     self.inner.as_ptr()
   }
+
+  /// Realize a store path.
+  ///
+  /// This builds/downloads the store path and all its dependencies,
+  /// making them available in the local store.
+  ///
+  /// # Arguments
+  ///
+  /// * `path` - The store path to realize
+  ///
+  /// # Returns
+  ///
+  /// A vector of (output_name, store_path) tuples for each realized output.
+  /// For example, a derivation might produce outputs like ("out", path1), ("dev", path2).
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the path cannot be realized.
+  pub fn realize(&self, path: &StorePath) -> Result<Vec<(String, StorePath)>> {
+    // Type alias for our userdata: (outputs vector, context)
+    type Userdata = (Vec<(String, StorePath)>, Arc<Context>);
+
+    // Callback function that will be called for each realized output
+    unsafe extern "C" fn realize_callback(
+      userdata: *mut std::os::raw::c_void,
+      outname: *const std::os::raw::c_char,
+      out: *const sys::StorePath,
+    ) {
+      // SAFETY: userdata is a valid pointer to our (Vec, Arc<Context>) tuple
+      let data = unsafe { &mut *(userdata as *mut Userdata) };
+      let (outputs, context) = data;
+
+      // SAFETY: outname is a valid C string from Nix
+      let name = if !outname.is_null() {
+        unsafe {
+          CStr::from_ptr(outname)
+            .to_string_lossy()
+            .into_owned()
+        }
+      } else {
+        String::from("out") // Default output name
+      };
+
+      // SAFETY: out is a valid StorePath pointer from Nix, we need to clone it
+      // because Nix owns the original and may free it after the callback
+      if !out.is_null() {
+        let cloned_path =
+          unsafe { sys::nix_store_path_clone(out as *mut sys::StorePath) };
+        if let Some(inner) = NonNull::new(cloned_path) {
+          let store_path = StorePath {
+            inner,
+            _context: Arc::clone(context),
+          };
+          outputs.push((name, store_path));
+        }
+      }
+    }
+
+    // Create userdata with empty outputs vector and context
+    let mut userdata: Userdata = (Vec::new(), Arc::clone(&self._context));
+    let userdata_ptr = &mut userdata as *mut Userdata as *mut std::os::raw::c_void;
+
+    // SAFETY: All pointers are valid, callback is compatible with the FFI signature
+    // - self._context is valid for the duration of this call
+    // - self.inner is valid (checked in Store::open)
+    // - path.inner is valid (checked in StorePath::parse)
+    // - userdata_ptr points to valid stack memory
+    // - realize_callback matches the expected C function signature
+    let err = unsafe {
+      sys::nix_store_realise(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        path.as_ptr(),
+        userdata_ptr,
+        Some(realize_callback),
+      )
+    };
+
+    super::check_err(err)?;
+
+    // Return the collected outputs
+    Ok(userdata.0)
+  }
+
+  /// Parse a store path string into a StorePath.
+  ///
+  /// This is a convenience method that wraps `StorePath::parse()`.
+  ///
+  /// # Arguments
+  ///
+  /// * `path` - The store path string (e.g., "/nix/store/...")
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the path cannot be parsed.
+  ///
+  /// # Example
+  ///
+  /// ```no_run
+  /// # use std::sync::Arc;
+  /// # use nix_bindings::{Context, Store};
+  /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+  /// let ctx = Arc::new(Context::new()?);
+  /// let store = Store::open(&ctx, None)?;
+  /// let path = store.store_path("/nix/store/...")?;
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn store_path(&self, path: &str) -> Result<StorePath> {
+    StorePath::parse(&self._context, self, path)
+  }
+
 }
 
 impl Drop for Store {

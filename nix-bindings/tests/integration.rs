@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{process::Command, sync::Arc};
 
 use nix_bindings::{Context, EvalStateBuilder, Store, ValueType};
 use serial_test::serial;
@@ -304,4 +304,84 @@ fn test_value_formatting_display() {
     .expect("Failed to evaluate");
   println!("List display: {list}");
   println!("List debug: {list:?}");
+}
+
+#[test]
+#[serial]
+fn test_realize_derivation() {
+  // This test uses nix-instantiate to create a derivation, then realizes it
+  // using the Store::realize() method
+
+  // Create a simple Nix expression that builds a derivation
+  let nix_expr = r#"
+    derivation {
+      name = "test-derivation";
+      builder = "/bin/sh";
+      args = [ "-c" "echo 'Hello from Nix!' > $out" ];
+      system = builtins.currentSystem;
+    }
+  "#;
+
+  // Use nix-instantiate to create a .drv file
+  let output = Command::new("nix-instantiate")
+    .arg("--expr")
+    .arg(nix_expr)
+    .output()
+    .expect("Failed to run nix-instantiate");
+
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    panic!("nix-instantiate failed: {}", stderr);
+  }
+
+  let drv_path = String::from_utf8(output.stdout)
+    .expect("Invalid UTF-8 in nix-instantiate output")
+    .trim()
+    .to_string();
+
+  println!("Derivation path: {}", drv_path);
+
+  // Now use the Rust bindings to parse and realize the derivation
+  let ctx = Arc::new(Context::new().expect("Failed to create context"));
+  let store = Store::open(&ctx, None).expect("Failed to open store");
+
+  // Parse the derivation path using the convenient store.store_path() method
+  let store_path = store
+    .store_path(&drv_path)
+    .expect("Failed to parse store path");
+
+  println!("Parsed store path name: {}", store_path.name().expect("Failed to get name"));
+
+  // Realize the derivation
+  let realized_outputs = store
+    .realize(&store_path)
+    .expect("Failed to realize derivation");
+
+  println!("Realized {} outputs:", realized_outputs.len());
+  for (name, path) in &realized_outputs {
+    println!(
+      "  Output '{}': {}",
+      name,
+      path.name().expect("Failed to get path name")
+    );
+  }
+
+  // Verify we got at least one output
+  assert!(
+    !realized_outputs.is_empty(),
+    "Expected at least one realized output"
+  );
+
+  // Verify the output has a name
+  let (output_name, output_path) = &realized_outputs[0];
+  println!("First output name: {}", output_name);
+
+  let path_name = output_path.name().expect("Failed to get output path name");
+  println!("First output path name: {}", path_name);
+
+  // The path name should contain our derivation name
+  assert!(
+    path_name.contains("test-derivation"),
+    "Output path should contain derivation name"
+  );
 }
