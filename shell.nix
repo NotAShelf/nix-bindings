@@ -4,13 +4,14 @@
   # it might be nicer to take environment variables which the build system
   # can respect to build them using the appropriate Nix version.
   nixForBindings = pkgs.nixVersions.nix_2_32;
+  inherit (pkgs.rustc) llvmPackages;
 in
   pkgs.mkShell {
     name = "nix-bindings";
     packages = with pkgs; [
       cargo
       rustc
-      rustc.llvmPackages.lld
+      llvmPackages.lld
 
       (rustfmt.override {asNightly = true;})
       rust-analyzer-unwrapped
@@ -34,10 +35,10 @@ in
     ];
 
     env = let
-      inherit (pkgs.llvmPackages_19) llvm;
+      inherit (llvmPackages) llvm;
     in {
       RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-      LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+      LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
       BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
 
       # `cargo-llvm-cov` reads these environment variables to find these binaries,
