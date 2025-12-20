@@ -1,6 +1,10 @@
 [workspace]
 members = [ ".", "nix-bindings-sys" ]
 
+[workspace.dependencies]
+cc         = "1.2.50"
+pkg-config = "0.3.32"
+
 [package]
 name         = "nix-bindings"
 description  = "Rust binding for Nix, the build tool"
