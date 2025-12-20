@@ -355,7 +355,7 @@ impl EvalState {
   /// # Errors
   ///
   /// Returns an error if evaluation fails.
-  pub fn eval_from_string(&self, expr: &str, path: &str) -> Result<Value> {
+  pub fn eval_from_string(&self, expr: &str, path: &str) -> Result<Value<'_>> {
     let expr_c = CString::new(expr)?;
     let path_c = CString::new(path)?;
 
@@ -390,7 +390,7 @@ impl EvalState {
   /// # Errors
   ///
   /// Returns an error if value allocation fails.
-  pub fn alloc_value(&self) -> Result<Value> {
+  pub fn alloc_value(&self) -> Result<Value<'_>> {
     // SAFETY: context and state are valid
     let value_ptr = unsafe {
       sys::nix_alloc_value(self.context.as_ptr(), self.inner.as_ptr())
