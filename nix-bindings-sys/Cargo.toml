@@ -1,6 +1,6 @@
 [package]
 name        = "nix-bindings-sys"
-version     = "2.28.5"
+version     = "2.32.4"
 authors     = [ "NotAShelf <raf@notashelf.dev>" ]
 edition     = "2024"
 license     = "MIT"
