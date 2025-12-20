@@ -1,7 +1,7 @@
 # Ignore everything by default
-target/
 /*
 !/
+target/
 
 !/nix-bindings-sys
 !/tests
@@ -16,3 +16,7 @@ target/
 !/.gitignore
 !/.github
 !/.editorconfig
+
+# Nix
+!/flake.nix
+!/shell.nix
