@@ -1,4 +1,8 @@
 {pkgs ? import <nixpkgs> {}}: let
+  # FIXME: we eventually want to allow building for various Nix versions
+  # in the same dev shell. Instead of a 'nixForBindings' variable *here*
+  # it might be nicer to take environment variables which the build system
+  # can respect to build them using the appropriate Nix version.
   nixForBindings = pkgs.nixVersions.nix_2_32;
 in
   pkgs.mkShell {
@@ -6,24 +10,26 @@ in
     packages = with pkgs; [
       cargo
       rustc
+      rustc.llvmPackages.lld
 
-      rust-analyzer-unwrapped
       (rustfmt.override {asNightly = true;})
+      rust-analyzer-unwrapped
       clippy
       taplo
       lldb
 
+      # Additional Cargo tooling
       cargo-llvm-cov
+      cargo-nextest
     ];
 
     nativeBuildInputs = with pkgs; [
       nixForBindings.dev
       pkg-config
       glibc.dev
-      #gcc
     ];
 
-    buildInputs  = [
+    buildInputs = [
       nixForBindings
     ];
 

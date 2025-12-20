@@ -254,7 +254,7 @@ fn store_realise_and_copy_closure() {
   unsafe extern "C" fn realise_callback(
     _userdata: *mut ::std::os::raw::c_void,
     outname: *const ::std::os::raw::c_char,
-    out: *const ::std::os::raw::c_char,
+    out: *const StorePath,
   ) {
     // Just check that callback is called with non-null pointers
     assert!(!outname.is_null());
