@@ -2,7 +2,6 @@
 
 use std::{
   ffi::{CStr, CString},
-  mem::MaybeUninit,
   ptr,
 };
 
@@ -72,19 +71,20 @@ fn eval_simple_expression() {
     // Evaluate a simple integer expression
     let expr = CString::new("1 + 2").unwrap();
     let path = CString::new("<eval>").unwrap();
-    let mut value = std::mem::MaybeUninit::<nix_value>::uninit();
+    let value = nix_alloc_value(ctx, state);
+    assert!(!value.is_null());
 
     let eval_err = nix_expr_eval_from_string(
       ctx,
       state,
       expr.as_ptr(),
       path.as_ptr(),
-      value.as_mut_ptr(),
+      value,
     );
     assert_eq!(eval_err, nix_err_NIX_OK);
 
     // Force the value (should not be a thunk)
-    let force_err = nix_value_force(ctx, state, value.as_mut_ptr());
+    let force_err = nix_value_force(ctx, state, value);
     assert_eq!(force_err, nix_err_NIX_OK);
 
     nix_state_free(state);
@@ -307,14 +307,15 @@ fn function_application_and_force() {
     // Evaluate a function and apply it: (x: x + 1) 41
     let expr = CString::new("(x: x + 1)").unwrap();
     let path = CString::new("<eval>").unwrap();
-    let mut fn_val = MaybeUninit::<nix_value>::uninit();
+    let fn_val = nix_alloc_value(ctx, state);
+    assert!(!fn_val.is_null());
     assert_eq!(
       nix_expr_eval_from_string(
         ctx,
         state,
         expr.as_ptr(),
         path.as_ptr(),
-        fn_val.as_mut_ptr()
+        fn_val
       ),
       nix_err_NIX_OK
     );
@@ -324,34 +325,20 @@ fn function_application_and_force() {
     nix_init_int(ctx, arg_val, 41);
 
     // Result value
-    let mut result_val = MaybeUninit::<nix_value>::uninit();
+    let result_val = nix_alloc_value(ctx, state);
+    assert!(!result_val.is_null());
     assert_eq!(
-      nix_value_call(
-        ctx,
-        state,
-        fn_val.as_mut_ptr(),
-        arg_val,
-        result_val.as_mut_ptr()
-      ),
+      nix_value_call(ctx, state, fn_val, arg_val, result_val),
       nix_err_NIX_OK
     );
 
     // Force result
-    assert_eq!(
-      nix_value_force(ctx, state, result_val.as_mut_ptr()),
-      nix_err_NIX_OK
-    );
-    assert_eq!(
-      nix_get_type(ctx, result_val.as_mut_ptr()),
-      ValueType_NIX_TYPE_INT
-    );
-    assert_eq!(nix_get_int(ctx, result_val.as_mut_ptr()), 42);
+    assert_eq!(nix_value_force(ctx, state, result_val), nix_err_NIX_OK);
+    assert_eq!(nix_get_type(ctx, result_val), ValueType_NIX_TYPE_INT);
+    assert_eq!(nix_get_int(ctx, result_val), 42);
 
     // Deep force (should be a no-op for int)
-    assert_eq!(
-      nix_value_force_deep(ctx, state, result_val.as_mut_ptr()),
-      nix_err_NIX_OK
-    );
+    assert_eq!(nix_value_force_deep(ctx, state, result_val), nix_err_NIX_OK);
 
     nix_state_free(state);
     nix_eval_state_builder_free(builder);
@@ -384,13 +371,14 @@ fn error_handling_invalid_expression() {
     // Invalid expression
     let expr = CString::new("this is not valid nix").unwrap();
     let path = CString::new("<eval>").unwrap();
-    let mut value = MaybeUninit::<nix_value>::uninit();
+    let value = nix_alloc_value(ctx, state);
+    assert!(!value.is_null());
     let eval_err = nix_expr_eval_from_string(
       ctx,
       state,
       expr.as_ptr(),
       path.as_ptr(),
-      value.as_mut_ptr(),
+      value,
     );
     assert_ne!(eval_err, nix_err_NIX_OK);
 
@@ -477,27 +465,25 @@ fn big_thunk_evaluation() {
     )
     .unwrap();
     let path = CString::new("<eval>").unwrap();
-    let mut value = MaybeUninit::<nix_value>::uninit();
+    let value = nix_alloc_value(ctx, state);
+    assert!(!value.is_null());
 
     let eval_err = nix_expr_eval_from_string(
       ctx,
       state,
       expr.as_ptr(),
       path.as_ptr(),
-      value.as_mut_ptr(),
+      value,
     );
     assert_eq!(eval_err, nix_err_NIX_OK);
 
     // The top-level should be an attrset
-    assert_eq!(
-      nix_get_type(ctx, value.as_mut_ptr()),
-      ValueType_NIX_TYPE_ATTRS
-    );
+    assert_eq!(nix_get_type(ctx, value), ValueType_NIX_TYPE_ATTRS);
 
     // Get "result" attribute (ts should be a thunk initially)
     let result_name = CString::new("result").unwrap();
     let result_val =
-      nix_get_attr_byname(ctx, value.as_mut_ptr(), state, result_name.as_ptr());
+      nix_get_attr_byname(ctx, value, state, result_name.as_ptr());
     assert!(!result_val.is_null());
 
     // Force the result
@@ -509,8 +495,7 @@ fn big_thunk_evaluation() {
 
     // Get "other" attribute
     let other_name = CString::new("other").unwrap();
-    let other_val =
-      nix_get_attr_byname(ctx, value.as_mut_ptr(), state, other_name.as_ptr());
+    let other_val = nix_get_attr_byname(ctx, value, state, other_name.as_ptr());
     assert!(!other_val.is_null());
 
     let force_err2 = nix_value_force(ctx, state, other_val);
