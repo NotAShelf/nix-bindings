@@ -53,7 +53,7 @@ mod store;
 use std::{ffi::CString, fmt, ptr::NonNull, sync::Arc};
 
 #[cfg(test)] use serial_test::serial;
-pub use store::Store;
+pub use store::{Store, StorePath};
 
 /// Raw, unsafe FFI bindings to the Nix C API.
 ///
