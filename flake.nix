@@ -1,5 +1,5 @@
 {
-  inputs.nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-25.05";
+  inputs.nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-25.11";
   outputs = {nixpkgs, ...}: let
     systems = ["x86_64-linux" "aarch64-linux"];
     forEachSystem = nixpkgs.lib.genAttrs systems;
