@@ -50,11 +50,10 @@
 
 mod store;
 
-pub use store::Store;
-
 use std::{ffi::CString, fmt, ptr::NonNull, sync::Arc};
 
 #[cfg(test)] use serial_test::serial;
+pub use store::Store;
 
 /// Raw, unsafe FFI bindings to the Nix C API.
 ///

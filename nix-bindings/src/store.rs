@@ -1,5 +1,6 @@
 use std::{ffi::CString, ptr::NonNull, sync::Arc};
-use super::{sys, Context, Result, Error};
+
+use super::{Context, Error, Result, sys};
 
 /// Nix store for managing packages and derivations.
 ///
@@ -67,8 +68,9 @@ unsafe impl Sync for Store {}
 
 #[cfg(test)]
 mod tests {
-  use super::*;
   use serial_test::serial;
+
+  use super::*;
 
   #[test]
   #[serial]
@@ -77,4 +79,3 @@ mod tests {
     let _store = Store::open(&ctx, None).expect("Failed to open store");
   }
 }
-

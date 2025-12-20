@@ -1,9 +1,6 @@
 [workspace]
+members  = [ "nix-bindings", "nix-bindings-sys" ]
 resolver = "2"
-members = [
-  "nix-bindings",
-  "nix-bindings-sys",
-]
 
 [workspace.dependencies]
 cc         = "1.2.50"
