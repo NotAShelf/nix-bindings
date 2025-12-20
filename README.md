@@ -1,6 +1,6 @@
 # nix-bindings
 
-[Nix C API]: https://nix.dev/manual/nix/2.28/c-api
+[Nix C API]: https://nix.dev/manual/nix/2.32/c-api
 
 Rust FFI bindings for the [Nix C API].
 
@@ -44,7 +44,7 @@ this repository for instructions on using Nix as a library in C++ projects.
 > nix-bindings.
 
 This crate has been structured in a way that allows providing safe and unsafe
-bindings at the same time, through different subcrates. At the moment the crate
+bindings at the same time, through different sub-crates. At the moment the crate
 layout is as follows:
 
 ```plaintext
@@ -149,12 +149,14 @@ missing C testing, but it will make our lives easier in identifying the issue.
 
 ## Caveats
 
+[relevant section in the Nix manual]: https://nix.dev/manual/nix/2.32/c-api
+
 There are some caveats with this library. Namely, the C API is still unstable
 and incomplete. Not everything is directly available, and we are severely
-limited by what upstream provides to us. Upstream calls this API "C API with the
-intent of becoming a stable API, which it is currently not." See the
-[relevant section in the Nix manual](https://nix.dev/manual/nix/2.30/c-api) for
-more details and appropriate communication channels.
+limited by what upstream provides to us. Upstream calls this API _"C API with
+the intent of becoming a stable API, which it is currently not."_ See the
+[relevant section in the Nix manual] for more details and appropriate
+communication channels.
 
 This also means that not all CLI features are exposed. Some advanced or
 experimental features may require additional or upstreaming work.
