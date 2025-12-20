@@ -6,17 +6,22 @@ Rust FFI bindings for the [Nix C API].
 
 ## Overview
 
-[Nix]: https://nixos.or
+[Nix]: https://nixos.org
 [rust-bindgen]: https://github.com/rust-lang/rust-bindgen
 [more accessible documentation]: https://notashelf.github.io/nix-bindings/nix_bindings/bindings/index.html
 [this blog post]: https://fzakaria.com/2025/08/17/using-nix-as-a-library
 [discouraged by Bindgen]: https://rust-lang.github.io/rust-bindgen/cpp.html
+[doxygen-bindgen]: https://github.com/rich-ayr/doxygen-bindgen
 
 **nix-bindings** is a Rust crate that provides safe(ish), tested and idiomatic
 Rust bindings for the [Nix] build tool's experimental C API with
 [more accessible documentation]. [^1]
 
-[^1]: Work in progress.
+[^1]: The Doxygen format used by Nix in the C API is not very easily parsable.
+    The [doxygen-bindgen] crate does a pretty good job at this, but the
+    documentation for the raw bindings, i.e., `nix-bindings-sys` are not always
+    up to standard. Either way, consider this a "work in progress" and something
+    that will be improved over time as time and resources allow.
 
 The goal of this repository is to ultimately use those low-level bindings that
 provide direct, programmatic access to Nix store operations from Rust and use
@@ -56,9 +61,11 @@ layout is as follows:
 The `nix-bindings-sys` crate contains the build wrapper (`build.rs`), as well as
 tests and examples to demonstrate interacting with the generated bindings. Those
 tests and examples are expected to pass, and they serve as a safeguard for when
-API changes lead to breakage.
+API changes lead to breakage. This is one of the safety "promises" of this
+repository, and act as safeguards against wildly breaking changes that affect
+downstream.
 
-### High-level Bindings: `nix-bindings-sys`
+### Low-level Bindings: `nix-bindings-sys`
 
 #### Features
 
@@ -77,7 +84,7 @@ Additionally, with limited success nix-bindings allows you to:
 - Access and set Nix configuration settings
 - Retrieve and handle errors programmatically
 
-using the generated Rust bindings.
+All while using the generated Rust bindings.
 
 > [!NOTE]
 > I have elected to add a test suite [^2] and some real-world usage examples.
