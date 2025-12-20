@@ -1,5 +1,5 @@
 {pkgs ? import <nixpkgs> {}}: let
-  nixForBindings = pkgs.nixVersions.nix_2_28;
+  nixForBindings = pkgs.nixVersions.nix_2_32;
 in
   pkgs.mkShell {
     name = "nix-bindings";
@@ -21,6 +21,10 @@ in
       pkg-config
       glibc.dev
       #gcc
+    ];
+
+    buildInputs  = [
+      nixForBindings
     ];
 
     env = let

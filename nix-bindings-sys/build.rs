@@ -23,20 +23,16 @@ fn main() {
   // Tell cargo to invalidate the built crate whenever the wrapper changes
   println!("cargo:rerun-if-changed=include/wrapper.h");
 
-  // We must also link the required libraries for the C API symbols (in *c.so)
-  println!("cargo:rustc-link-lib=nixstorec");
-  println!("cargo:rustc-link-lib=nixutilc");
-  println!("cargo:rustc-link-lib=nixexprc");
-  println!("cargo:rustc-link-lib=archive");
-  println!("cargo:rustc-link-lib=nixflakec");
-
   // Use pkg-config to find nix-store include and link paths
   // This NEEDS to be included, or otherwise `nix_api_store.h` cannot
   // be found.
-  let lib = pkg_config::Config::new()
-    .atleast_version("2.0.0")
-    .probe("nix-store")
-    .expect("Could not find nix-store via pkg-config");
+  let nix_libraries = [
+    "nix-main-c",
+    "nix-expr-c",
+    "nix-store-c",
+    "nix-util-c",
+    "nix-flake-c",
+  ];
 
   // Dynamically get GCC's include path for standard headers (e.g., stdbool.h)
   let gcc_include = Command::new("gcc")
@@ -55,8 +51,15 @@ fn main() {
     .parse_callbacks(Box::new(ProcessComments));
 
   // Add all pkg-config include paths and GCC's include path to bindgen
-  for include_path in &lib.include_paths {
-    builder = builder.clang_arg(format!("-I{}", include_path.display()));
+  for nix_lib in nix_libraries {
+    let lib = pkg_config::probe_library(nix_lib)
+      .expect(&format!("Unable to find .pc file for {}", nix_lib));
+    for include_path in lib.include_paths {
+      builder = builder.clang_arg(format!("-I{}", include_path.display()));
+    }
+    for link_file in lib.link_files {
+      println!("cargo:rustc-link-lib={}", link_file.display());
+    }
   }
   builder = builder.clang_arg(format!("-I{gcc_include}"));
 

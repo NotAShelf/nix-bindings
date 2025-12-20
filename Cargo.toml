@@ -6,7 +6,7 @@ name         = "nix-bindings"
 description  = "Rust binding for Nix, the build tool"
 authors      = [ "NotAShelf <raf@notashelf.dev>" ]
 edition      = "2024"
-version      = "2.28.5"                                    # after the Nix version bindings were made with.
+version      = "2.32.4"                                    # after the Nix version bindings were made with.
 readme       = true
 repository   = "https://github.com/notashelf/nix-bindings"
 rust-version = "1.85"
@@ -16,7 +16,7 @@ license      = "MIT"
 path = "src/lib.rs"
 
 [dependencies]
-nix-bindings-sys = { path = "nix-bindings-sys", version = "2.28.5" }
+nix-bindings-sys = { path = "nix-bindings-sys", version = "2.32.4" }
 
 [dev-dependencies]
 serial_test = "3.2.0"
