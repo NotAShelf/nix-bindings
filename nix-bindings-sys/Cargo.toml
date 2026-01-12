@@ -18,7 +18,7 @@ pkg-config.workspace = true
 cc.workspace         = true
 
 [dev-dependencies]
-serial_test = "3.2.0"
+serial_test = "3.3.1"
 
 [package.metadata.docs.rs]
 targets = [ "x86_64-unknown-linux-gnu" ]
