@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)]
 use std::{env, path::PathBuf, process::Command};
 
 use bindgen::callbacks::ParseCallbacks;
@@ -53,7 +54,7 @@ fn main() {
   // Add all pkg-config include paths and GCC's include path to bindgen
   for nix_lib in nix_libraries {
     let lib = pkg_config::probe_library(nix_lib)
-      .expect(&format!("Unable to find .pc file for {}", nix_lib));
+      .unwrap_or_else(|_| panic!("Unable to find .pc file for {nix_lib}"));
     for include_path in lib.include_paths {
       builder = builder.clang_arg(format!("-I{}", include_path.display()));
     }
