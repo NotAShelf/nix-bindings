@@ -4,7 +4,7 @@ resolver = "3"
 
 [workspace.dependencies]
 cc         = "1.2.60"
-pkg-config = "0.3.32"
+pkg-config = "0.3.33"
 
 # Building bindgen with optimizations makes the build script run faster, more
 # than it is offset by the additional build time added to the crate itself by
