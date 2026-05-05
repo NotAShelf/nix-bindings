@@ -350,7 +350,10 @@ fn test_realize_derivation() {
     .store_path(&drv_path)
     .expect("Failed to parse store path");
 
-  println!("Parsed store path name: {}", store_path.name().expect("Failed to get name"));
+  println!(
+    "Parsed store path name: {}",
+    store_path.name().expect("Failed to get name")
+  );
 
   // Realize the derivation
   let realized_outputs = store
