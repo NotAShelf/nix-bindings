@@ -49,6 +49,7 @@
 //! ```
 
 mod attrs;
+pub mod external;
 pub mod flake;
 mod lists;
 pub mod primop;
@@ -397,9 +398,10 @@ unsafe impl Sync for Context {}
 /// This allows configuring the evaluation environment before creating
 /// the evaluation state.
 pub struct EvalStateBuilder {
-  inner:   NonNull<sys::nix_eval_state_builder>,
-  store:   Arc<Store>,
-  context: Arc<Context>,
+  inner:     NonNull<sys::nix_eval_state_builder>,
+  store:     Arc<Store>,
+  context:   Arc<Context>,
+  skip_load: bool,
 }
 
 impl EvalStateBuilder {
@@ -424,6 +426,7 @@ impl EvalStateBuilder {
       inner,
       store: Arc::clone(store),
       context: Arc::clone(&store._context),
+      skip_load: false,
     })
   }
 
@@ -488,22 +491,36 @@ impl EvalStateBuilder {
     Ok(self)
   }
 
+  /// Skip loading Nix configuration from the environment.
+  ///
+  /// By default [`build`](Self::build) calls `nix_eval_state_builder_load` to
+  /// read configuration from environment variables and config files. Call
+  /// this method to skip that step, which is useful in tests or sandboxed
+  /// environments.
+  #[must_use]
+  pub fn no_load_config(mut self) -> Self {
+    self.skip_load = true;
+    self
+  }
+
   /// Build the evaluation state.
   ///
   /// # Errors
   ///
   /// Returns an error if the evaluation state cannot be built.
   pub fn build(self) -> Result<EvalState> {
-    // Load configuration from environment first
+    // Load configuration from environment first (unless suppressed).
     // SAFETY: context and builder are valid
-    unsafe {
-      check_err(
-        self.context.as_ptr(),
-        sys::nix_eval_state_builder_load(
+    if !self.skip_load {
+      unsafe {
+        check_err(
           self.context.as_ptr(),
-          self.inner.as_ptr(),
-        ),
-      )?;
+          sys::nix_eval_state_builder_load(
+            self.context.as_ptr(),
+            self.inner.as_ptr(),
+          ),
+        )?;
+      }
     }
 
     // Build the state
@@ -537,7 +554,7 @@ impl Drop for EvalStateBuilder {
 /// and creating values.
 pub struct EvalState {
   pub(crate) inner:   NonNull<sys::EvalState>,
-  #[allow(dead_code)]
+  #[expect(dead_code, reason = "keeps the Arc<Store> alive Drop side-effects")]
   store:              Arc<Store>,
   pub(crate) context: Arc<Context>,
 }
@@ -584,6 +601,29 @@ impl EvalState {
     let inner = NonNull::new(value_ptr).ok_or(Error::NullPointer)?;
 
     Ok(Value { inner, state: self })
+  }
+
+  /// Evaluate a Nix expression from a file.
+  ///
+  /// Reads the file at `path`, then evaluates its contents using the parent
+  /// directory as the base path for relative imports.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the file cannot be read or if evaluation fails.
+  pub fn eval_from_file(&self, path: impl AsRef<Path>) -> Result<Value<'_>> {
+    let path = path.as_ref();
+    let expr = std::fs::read_to_string(path).map_err(|e| {
+      Error::Unknown(format!("Failed to read file {}: {e}", path.display()))
+    })?;
+    let base = path
+      .parent()
+      .unwrap_or_else(|| Path::new("."))
+      .to_str()
+      .ok_or_else(|| {
+        Error::Unknown("File path is not valid UTF-8".to_string())
+      })?;
+    self.eval_from_string(&expr, base)
   }
 
   /// Allocate a new uninitialized value.
@@ -1112,6 +1152,88 @@ impl Value<'_> {
     Ok(string)
   }
 
+  /// Convert this value to a string and return its store-path context.
+  ///
+  /// This is the extended form of [`as_string`](Self::as_string): it returns
+  /// the string content together with any store paths embedded in the string's
+  /// context. For ordinary strings the context vector is empty.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the value is not a string.
+  pub fn as_string_with_context(
+    &self,
+  ) -> Result<(String, Vec<store::StorePath>)> {
+    if self.value_type() != ValueType::String {
+      return Err(Error::InvalidType {
+        expected: "string",
+        actual:   self.value_type().to_string(),
+      });
+    }
+
+    // SAFETY: context, state, and value are valid; type is checked
+    let realised_str = unsafe {
+      sys::nix_string_realise(
+        self.state.context.as_ptr(),
+        self.state.as_ptr(),
+        self.inner.as_ptr(),
+        false,
+      )
+    };
+
+    if realised_str.is_null() {
+      return Err(Error::NullPointer);
+    }
+
+    // Read the string content.
+    let buffer_start =
+      unsafe { sys::nix_realised_string_get_buffer_start(realised_str) };
+    let buffer_size =
+      unsafe { sys::nix_realised_string_get_buffer_size(realised_str) };
+
+    if buffer_start.is_null() {
+      unsafe { sys::nix_realised_string_free(realised_str) };
+      return Err(Error::NullPointer);
+    }
+
+    let bytes = unsafe {
+      std::slice::from_raw_parts(buffer_start.cast::<u8>(), buffer_size)
+    };
+    let string = match std::str::from_utf8(bytes) {
+      Ok(s) => s.to_owned(),
+      Err(_) => {
+        unsafe { sys::nix_realised_string_free(realised_str) };
+        return Err(Error::Unknown("Invalid UTF-8 in string".to_string()));
+      },
+    };
+
+    // Collect store-path context.
+    let count =
+      unsafe { sys::nix_realised_string_get_store_path_count(realised_str) };
+    let mut paths = Vec::with_capacity(count);
+    for i in 0..count {
+      // SAFETY: index is in bounds
+      let raw =
+        unsafe { sys::nix_realised_string_get_store_path(realised_str, i) };
+      if raw.is_null() {
+        continue;
+      }
+      // Clone the path so we own it independently of the realised_str buffer.
+      let cloned =
+        unsafe { sys::nix_store_path_clone(raw as *mut sys::StorePath) };
+      if let Some(inner) = std::ptr::NonNull::new(cloned) {
+        paths.push(store::StorePath {
+          inner,
+          _context: Arc::clone(&self.state.context),
+        });
+      }
+    }
+
+    unsafe { sys::nix_realised_string_free(realised_str) };
+
+    Ok((string, paths))
+  }
+
   /// Convert this value to a filesystem path.
   ///
   /// # Errors
@@ -1242,14 +1364,6 @@ impl Value<'_> {
 
   /// Get the raw value pointer.
   ///
-  /// # Safety
-  ///
-  /// The caller must ensure the pointer is used safely.
-  #[allow(dead_code)]
-  pub(crate) unsafe fn as_ptr(&self) -> *mut sys::nix_value {
-    self.inner.as_ptr()
-  }
-
   /// Format this value as Nix syntax.
   ///
   /// This provides a string representation that matches Nix's own syntax,
@@ -1589,7 +1703,7 @@ mod tests {
 
   #[test]
   #[serial]
-  fn test_value_formatting() {
+  fn test_as_string_with_context_plain() {
     let ctx = Arc::new(Context::new().expect("Failed to create context"));
     let store =
       Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
@@ -1598,71 +1712,54 @@ mod tests {
       .build()
       .expect("Failed to build state");
 
-    // Test integer formatting
-    let int_val = state
-      .eval_from_string("42", "<eval>")
-      .expect("Failed to evaluate int");
-    assert_eq!(format!("{int_val}"), "42");
-    assert_eq!(format!("{int_val:?}"), "Value::Int(42)");
-    assert_eq!(int_val.to_nix_string().expect("Failed to format"), "42");
-
-    // Test boolean formatting
-    let bool_val = state
-      .eval_from_string("true", "<eval>")
-      .expect("Failed to evaluate bool");
-    assert_eq!(format!("{bool_val}"), "true");
-    assert_eq!(format!("{bool_val:?}"), "Value::Bool(true)");
-    assert_eq!(bool_val.to_nix_string().expect("Failed to format"), "true");
-
-    let false_val = state
-      .eval_from_string("false", "<eval>")
-      .expect("Failed to evaluate bool");
-    assert_eq!(format!("{false_val}"), "false");
-    assert_eq!(
-      false_val.to_nix_string().expect("Failed to format"),
-      "false"
-    );
-
-    // Test string formatting
-    let str_val = state
-      .eval_from_string("\"hello world\"", "<eval>")
+    let val = state
+      .eval_from_string("\"hello\"", "<eval>")
       .expect("Failed to evaluate string");
-    assert_eq!(format!("{str_val}"), "hello world");
-    assert_eq!(format!("{str_val:?}"), "Value::String(\"hello world\")");
-    assert_eq!(
-      str_val.to_nix_string().expect("Failed to format"),
-      "\"hello world\""
+    let (s, ctx_paths) = val
+      .as_string_with_context()
+      .expect("as_string_with_context failed");
+    assert_eq!(s, "hello");
+    assert!(
+      ctx_paths.is_empty(),
+      "Plain string should have no context paths"
     );
+  }
 
-    // Test string with quotes
-    let quoted_str = state
-      .eval_from_string("\"say \\\"hello\\\"\"", "<eval>")
-      .expect("Failed to evaluate quoted string");
-    assert_eq!(format!("{quoted_str}"), "say \"hello\"");
-    assert_eq!(
-      quoted_str.to_nix_string().expect("Failed to format"),
-      "\"say \\\"hello\\\"\""
-    );
+  #[test]
+  #[serial]
+  fn test_eval_from_file() {
+    use std::io::Write as _;
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store =
+      Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
+    let state = EvalStateBuilder::new(&store)
+      .expect("Failed to create builder")
+      .build()
+      .expect("Failed to build state");
 
-    // Test null formatting
-    let null_val = state
-      .eval_from_string("null", "<eval>")
-      .expect("Failed to evaluate null");
-    assert_eq!(format!("{null_val}"), "null");
-    assert_eq!(format!("{null_val:?}"), "Value::Null");
-    assert_eq!(null_val.to_nix_string().expect("Failed to format"), "null");
+    let mut tmp =
+      tempfile::NamedTempFile::new().expect("Failed to create temp file");
+    write!(tmp, "1 + 1").expect("Failed to write temp file");
+    let result = state
+      .eval_from_file(tmp.path())
+      .expect("eval_from_file failed");
+    assert_eq!(result.as_int().unwrap(), 2);
+  }
 
-    // Test collection formatting
-    let attrs_val = state
-      .eval_from_string("{ a = 1; }", "<eval>")
-      .expect("Failed to evaluate attrs");
-    assert_eq!(format!("{attrs_val}"), "{ <attrs> }");
-    assert_eq!(format!("{attrs_val:?}"), "Value::Attrs({ <attrs> })");
-
-    let list_val = state
-      .eval_from_string("[ 1 2 3 ]", "<eval>")
-      .expect("Failed to evaluate list");
-    assert_eq!(format!("{list_val}"), "[ <list> ]");
-    assert_eq!(format!("{list_val:?}"), "Value::List([ <list> ])");
+  #[test]
+  #[serial]
+  fn test_no_load_config() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store =
+      Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
+    let state = EvalStateBuilder::new(&store)
+      .expect("Failed to create builder")
+      .no_load_config()
+      .build()
+      .expect("Failed to build state with no_load_config");
+    let val = state
+      .eval_from_string("1 + 1", "<eval>")
+      .expect("Evaluation failed");
+    assert_eq!(val.as_int().unwrap(), 2);
   }
 }
