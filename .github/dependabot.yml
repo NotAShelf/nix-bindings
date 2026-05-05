@@ -3,11 +3,23 @@ updates:
   # Update Cargo deps
   - package-ecosystem: cargo
     directory: "/"
+    cooldown:
+      default-days: 7
     schedule:
-      interval: "weekly"
+      interval: daily
 
   # Update used workflows
   - package-ecosystem: github-actions
     directory: "/"
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: daily
+
+  # Update Nixpkgs
+  - package-ecosystem: nix
+    directory: "/"
+    cooldown:
+      default-days: 7
     schedule:
       interval: daily
