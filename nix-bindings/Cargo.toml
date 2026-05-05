@@ -13,7 +13,7 @@ license      = "MIT"
 path = "src/lib.rs"
 
 [dependencies]
-nix-bindings-sys = { path = "../nix-bindings-sys", version = "2.32.4" }
+nix-bindings-sys.workspace = true
 
 [dev-dependencies]
-serial_test = "3.4.0"
+serial_test.workspace = true
