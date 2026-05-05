@@ -139,7 +139,9 @@ impl Value<'_> {
 
   /// Create an iterator over key-value pairs.
   ///
-  /// Returns an [`AttrIterator`] for iterating through all attributes.
+  /// # Returns
+  ///
+  /// An iterator over all key-value pairs in the attribute set.
   ///
   /// # Errors
   ///
