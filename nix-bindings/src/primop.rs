@@ -40,7 +40,13 @@
 //! # }
 //! ```
 
-use std::{ffi::CString, marker::PhantomData, os::raw::c_void};
+use std::{
+  ffi::CString,
+  marker::PhantomData,
+  os::raw::c_void,
+  panic::{self, AssertUnwindSafe},
+  sync::Arc,
+};
 
 use crate::{Context, Error, Result, ValueType, check_err, sys};
 
@@ -95,21 +101,24 @@ unsafe extern "C" fn trampoline(
     _phantom: PhantomData,
   };
 
-  if let Err(e) = (data.f)(&arg_wrappers, &mut ret_wrapper) {
-    // Propagate the error to the Nix context so it surfaces as a Nix
-    // evaluation error.  Fall back to a static message if the error string
-    // itself contains an interior NUL byte (which would make CString::new
-    // fail).
-    let msg = format!("primop error: {e}");
-    let msg_c = CString::new(msg)
-      .unwrap_or_else(|_| CString::new("primop error").unwrap());
-    unsafe {
-      sys::nix_set_err_msg(
-        context,
-        sys::nix_err_NIX_ERR_NIX_ERROR,
-        msg_c.as_ptr(),
-      );
-    }
+  let result = panic::catch_unwind(AssertUnwindSafe(|| {
+    (data.f)(&arg_wrappers, &mut ret_wrapper)
+  }));
+
+  let err_msg = match result {
+    Ok(Ok(())) => return,
+    Ok(Err(e)) => format!("primop error: {e}"),
+    Err(_) => "primop panicked".to_string(),
+  };
+
+  let msg_c = CString::new(err_msg)
+    .unwrap_or_else(|_| CString::new("primop error").unwrap());
+  unsafe {
+    sys::nix_set_err_msg(
+      context,
+      sys::nix_err_NIX_ERR_NIX_ERROR,
+      msg_c.as_ptr(),
+    );
   }
 }
 
@@ -348,8 +357,8 @@ impl PrimOpRet<'_> {
 pub struct PrimOp {
   /// GC-owned pointer; we hold one reference until consumed.
   inner:      *mut sys::PrimOp,
-  /// Context needed to call `nix_gc_decref` in Drop.
-  ctx:        *mut sys::nix_c_context,
+  /// Keeps the context alive for the lifetime of the PrimOp.
+  context:    Arc<Context>,
   /// Set to `true` after `register()` so Drop skips the decref.
   registered: bool,
 }
@@ -375,7 +384,7 @@ impl PrimOp {
   /// Returns an error if the name or doc string contains an interior NUL
   /// byte, or if the underlying allocation fails.
   pub fn new<F>(
-    context: &Context,
+    context: &Arc<Context>,
     name: &str,
     arity: u32,
     doc: Option<&str>,
@@ -431,7 +440,7 @@ impl PrimOp {
 
     Ok(PrimOp {
       inner:      primop_ptr,
-      ctx:        unsafe { context.as_ptr() },
+      context:    Arc::clone(context),
       registered: false,
     })
   }
@@ -450,7 +459,7 @@ impl PrimOp {
   pub fn register(mut self, context: &Context) -> Result<()> {
     // SAFETY: context and inner are valid
     let err = unsafe { sys::nix_register_primop(context.as_ptr(), self.inner) };
-    check_err(self.ctx, err)?;
+    check_err(unsafe { self.context.as_ptr() }, err)?;
     // Mark as registered only after confirmed success so Drop still calls
     // nix_gc_decref if registration fails.
     self.registered = true;
@@ -496,7 +505,10 @@ impl Drop for PrimOp {
       // closure.
       // SAFETY: ctx and inner are valid
       unsafe {
-        let _ = sys::nix_gc_decref(self.ctx, self.inner as *const c_void);
+        let _ = sys::nix_gc_decref(
+          self.context.as_ptr(),
+          self.inner as *const c_void,
+        );
       }
     }
   }
