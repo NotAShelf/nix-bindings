@@ -35,8 +35,8 @@ jobs:
 
       - name: Run tests for ${{ matrix.package }}
         run: |
-          # Give us cargo & friends from the devshell
+          # Give us cargo, Nix & friends from the devshell
           eval "$(nix print-dev-env)"
           set -x
 
-          cargo test -p ${{ matrix.package }} | exit 1
+          cargo nextest run -p ${{ matrix.package }}

@@ -3,7 +3,7 @@ name: "Check formating & lints"
 on:
   workflow_dispatch:
   pull_request:
-    branches: ["master"]
+    branches: ["main"]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
