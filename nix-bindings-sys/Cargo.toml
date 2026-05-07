@@ -1,24 +1,25 @@
 [package]
-name        = "nix-bindings-sys"
-version     = "2.32.4"
-authors     = [ "NotAShelf <raf@notashelf.dev>" ]
-edition     = "2024"
-license     = "MIT"
-description = "Raw, unsafe FFI bindings to the Nix C API"
-repository  = "https://github.com/notashelf/nix-bindings"
-publish     = true
+name                   = "nix-bindings-sys"
+description            = "Raw, unsafe FFI bindings to the Nix C API"
+edition.workspace      = true
+version.workspace      = true
+readme.workspace       = true
+repository.workspace   = true
+rust-version.workspace = true
+license.workspace      = true
+publish                = true
+
+[package.metadata.docs.rs]
+targets = [ "x86_64-unknown-linux-gnu" ]
 
 [lib]
 path = "lib.rs"
 
 [build-dependencies]
-bindgen              = { default-features = false, features = [ "logging", "runtime" ], version = "0.72.1" }
-doxygen-bindgen      = "0.1.3"
-pkg-config.workspace = true
-cc.workspace         = true
+bindgen.workspace         = true
+cc.workspace              = true
+doxygen-bindgen.workspace = true
+pkg-config.workspace      = true
 
 [dev-dependencies]
-serial_test = "3.4.0"
-
-[package.metadata.docs.rs]
-targets = [ "x86_64-unknown-linux-gnu" ]
+serial_test.workspace = true

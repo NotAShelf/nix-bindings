@@ -1,6 +1,10 @@
-use std::{ffi::{CStr, CString}, ptr::NonNull, sync::Arc};
+use std::{
+  ffi::{CStr, CString},
+  ptr::NonNull,
+  sync::Arc,
+};
 
-use super::{Context, Error, Result, sys};
+use super::{Context, Error, Result, check_err, string_from_callback, sys};
 
 /// Nix store for managing packages and derivations.
 ///
@@ -12,25 +16,39 @@ pub struct Store {
 
 /// A path in the Nix store.
 ///
-/// Represents a store path that can be realized, queried, or manipulated.
+/// Represents a store path that can be realized or queried.
 pub struct StorePath {
   pub(crate) inner:    NonNull<sys::StorePath>,
   pub(crate) _context: Arc<Context>,
 }
 
+/// A Nix derivation loaded from its JSON representation.
+///
+/// Derivations are the build recipes used by the Nix store. They describe
+/// how to produce a store path from inputs. Use [`Derivation::from_json`]
+/// to construct one and [`Derivation::add_to_store`] to register it.
+pub struct Derivation {
+  inner:    *mut sys::nix_derivation,
+  _context: Arc<Context>,
+}
+
 impl StorePath {
-  /// Parse a store path string into a StorePath.
+  /// Parse a store path string into a `StorePath`.
   ///
   /// # Arguments
   ///
   /// * `context` - The Nix context
   /// * `store` - The store containing the path
-  /// * `path` - The store path string (e.g., "/nix/store/...")
+  /// * `path` - The store path string (e.g., `"/nix/store/..."`)
   ///
   /// # Errors
   ///
-  /// Returns an error if the path cannot be parsed.
-  pub fn parse(context: &Arc<Context>, store: &Store, path: &str) -> Result<Self> {
+  /// Returns an error if the path string is not a valid store path.
+  pub fn parse(
+    context: &Arc<Context>,
+    store: &Store,
+    path: &str,
+  ) -> Result<Self> {
     let path_cstring = CString::new(path)?;
 
     // SAFETY: context, store, and path_cstring are valid
@@ -52,47 +70,24 @@ impl StorePath {
 
   /// Get the name component of the store path.
   ///
-  /// This returns the name part of the store path (everything after the hash).
-  /// For example, for "/nix/store/abc123...-hello-1.0", this returns "hello-1.0".
+  /// Returns the name part of the store path (everything after the hash).
+  /// For example, for `"/nix/store/abc123...-hello-1.0"` this returns
+  /// `"hello-1.0"`.
   ///
   /// # Errors
   ///
   /// Returns an error if the name cannot be retrieved.
   pub fn name(&self) -> Result<String> {
-    // Callback to receive the string
-    unsafe extern "C" fn name_callback(
-      start: *const std::os::raw::c_char,
-      n: std::os::raw::c_uint,
-      user_data: *mut std::os::raw::c_void,
-    ) {
-      let result = unsafe { &mut *(user_data as *mut Option<String>) };
-
-      if !start.is_null() && n > 0 {
-        let bytes = unsafe {
-          std::slice::from_raw_parts(start.cast::<u8>(), n as usize)
-        };
-        if let Ok(s) = std::str::from_utf8(bytes) {
-          *result = Some(s.to_string());
-        }
-      }
-    }
-
-    let mut result: Option<String> = None;
-    let user_data = &mut result as *mut _ as *mut std::os::raw::c_void;
-
     // SAFETY: self.inner is valid, callback matches expected signature
-    unsafe {
-      sys::nix_store_path_name(self.inner.as_ptr(), Some(name_callback), user_data);
-    }
-
+    let result = unsafe {
+      string_from_callback(|cb, ud| {
+        sys::nix_store_path_name(self.inner.as_ptr(), cb, ud);
+      })
+    };
     result.ok_or(Error::NullPointer)
   }
 
   /// Get the raw store path pointer.
-  ///
-  /// # Safety
-  ///
-  /// The caller must ensure the pointer is used safely.
   pub(crate) unsafe fn as_ptr(&self) -> *mut sys::StorePath {
     self.inner.as_ptr()
   }
@@ -100,10 +95,9 @@ impl StorePath {
 
 impl Clone for StorePath {
   fn clone(&self) -> Self {
-    // SAFETY: self.inner is valid, nix_store_path_clone creates a new copy
+    // SAFETY: self.inner is valid
     let cloned_ptr = unsafe { sys::nix_store_path_clone(self.inner.as_ptr()) };
 
-    // This should never fail as cloning a valid path should always succeed
     let inner = NonNull::new(cloned_ptr)
       .expect("nix_store_path_clone returned null for valid path");
 
@@ -116,7 +110,7 @@ impl Clone for StorePath {
 
 impl Drop for StorePath {
   fn drop(&mut self) {
-    // SAFETY: We own the store path and it's valid until drop
+    // SAFETY: We own the store path and it is valid until drop
     unsafe {
       sys::nix_store_path_free(self.inner.as_ptr());
     }
@@ -127,13 +121,88 @@ impl Drop for StorePath {
 unsafe impl Send for StorePath {}
 unsafe impl Sync for StorePath {}
 
+impl Derivation {
+  /// Parse a derivation from its JSON representation.
+  ///
+  /// # Arguments
+  ///
+  /// * `context` - The Nix context
+  /// * `store` - The store to use
+  /// * `json` - JSON string describing the derivation
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the JSON is not a valid derivation description.
+  pub fn from_json(
+    context: &Arc<Context>,
+    store: &Store,
+    json: &str,
+  ) -> Result<Self> {
+    let json_c = CString::new(json)?;
+
+    // SAFETY: context, store, and json_c are valid
+    let drv_ptr = unsafe {
+      sys::nix_derivation_from_json(
+        context.as_ptr(),
+        store.as_ptr(),
+        json_c.as_ptr(),
+      )
+    };
+
+    if drv_ptr.is_null() {
+      return Err(Error::NullPointer);
+    }
+
+    Ok(Derivation {
+      inner:    drv_ptr,
+      _context: Arc::clone(context),
+    })
+  }
+
+  /// Add this derivation to the store and return its output store path.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the derivation cannot be registered in the store.
+  pub fn add_to_store(&mut self, store: &Store) -> Result<StorePath> {
+    // SAFETY: context, store, and inner are valid
+    let path_ptr = unsafe {
+      sys::nix_add_derivation(
+        self._context.as_ptr(),
+        store.as_ptr(),
+        self.inner,
+      )
+    };
+
+    let inner = NonNull::new(path_ptr).ok_or(Error::NullPointer)?;
+
+    Ok(StorePath {
+      inner,
+      _context: Arc::clone(&self._context),
+    })
+  }
+}
+
+impl Drop for Derivation {
+  fn drop(&mut self) {
+    // SAFETY: We own the derivation and it is valid until drop
+    unsafe {
+      sys::nix_derivation_free(self.inner);
+    }
+  }
+}
+
+// SAFETY: Derivation can be shared between threads
+unsafe impl Send for Derivation {}
+unsafe impl Sync for Derivation {}
+
 impl Store {
   /// Open a Nix store.
   ///
   /// # Arguments
   ///
   /// * `context` - The Nix context
-  /// * `uri` - Optional store URI (None for default store)
+  /// * `uri` - Optional store URI (`None` for the default local store)
   ///
   /// # Errors
   ///
@@ -147,7 +216,7 @@ impl Store {
       std::ptr::null()
     };
 
-    // SAFETY: context is valid, uri_ptr is either null or valid CString
+    // SAFETY: context is valid; uri_ptr is either null or a valid CString
     let store_ptr = unsafe {
       sys::nix_store_open(context.as_ptr(), uri_ptr, std::ptr::null_mut())
     };
@@ -161,81 +230,55 @@ impl Store {
   }
 
   /// Get the raw store pointer.
-  ///
-  /// # Safety
-  ///
-  /// The caller must ensure the pointer is used safely.
   pub(crate) unsafe fn as_ptr(&self) -> *mut sys::Store {
     self.inner.as_ptr()
   }
 
   /// Realize a store path.
   ///
-  /// This builds/downloads the store path and all its dependencies,
-  /// making them available in the local store.
-  ///
-  /// # Arguments
-  ///
-  /// * `path` - The store path to realize
+  /// Builds or downloads the store path and all its dependencies, making
+  /// them available in the local store.
   ///
   /// # Returns
   ///
-  /// A vector of (output_name, store_path) tuples for each realized output.
-  /// For example, a derivation might produce outputs like ("out", path1), ("dev", path2).
+  /// A vector of `(output_name, store_path)` pairs for each realized output.
   ///
   /// # Errors
   ///
   /// Returns an error if the path cannot be realized.
   pub fn realize(&self, path: &StorePath) -> Result<Vec<(String, StorePath)>> {
-    // Type alias for our userdata: (outputs vector, context)
     type Userdata = (Vec<(String, StorePath)>, Arc<Context>);
 
-    // Callback function that will be called for each realized output
     unsafe extern "C" fn realize_callback(
       userdata: *mut std::os::raw::c_void,
       outname: *const std::os::raw::c_char,
       out: *const sys::StorePath,
     ) {
-      // SAFETY: userdata is a valid pointer to our (Vec, Arc<Context>) tuple
       let data = unsafe { &mut *(userdata as *mut Userdata) };
       let (outputs, context) = data;
 
-      // SAFETY: outname is a valid C string from Nix
       let name = if !outname.is_null() {
-        unsafe {
-          CStr::from_ptr(outname)
-            .to_string_lossy()
-            .into_owned()
-        }
+        unsafe { CStr::from_ptr(outname).to_string_lossy().into_owned() }
       } else {
-        String::from("out") // Default output name
+        String::from("out")
       };
 
-      // SAFETY: out is a valid StorePath pointer from Nix, we need to clone it
-      // because Nix owns the original and may free it after the callback
       if !out.is_null() {
         let cloned_path =
           unsafe { sys::nix_store_path_clone(out as *mut sys::StorePath) };
         if let Some(inner) = NonNull::new(cloned_path) {
-          let store_path = StorePath {
+          outputs.push((name, StorePath {
             inner,
             _context: Arc::clone(context),
-          };
-          outputs.push((name, store_path));
+          }));
         }
       }
     }
 
-    // Create userdata with empty outputs vector and context
     let mut userdata: Userdata = (Vec::new(), Arc::clone(&self._context));
-    let userdata_ptr = &mut userdata as *mut Userdata as *mut std::os::raw::c_void;
+    let userdata_ptr =
+      &mut userdata as *mut Userdata as *mut std::os::raw::c_void;
 
-    // SAFETY: All pointers are valid, callback is compatible with the FFI signature
-    // - self._context is valid for the duration of this call
-    // - self.inner is valid (checked in Store::open)
-    // - path.inner is valid (checked in StorePath::parse)
-    // - userdata_ptr points to valid stack memory
-    // - realize_callback matches the expected C function signature
     let err = unsafe {
       sys::nix_store_realise(
         self._context.as_ptr(),
@@ -246,19 +289,14 @@ impl Store {
       )
     };
 
-    super::check_err(err)?;
+    check_err(unsafe { self._context.as_ptr() }, err)?;
 
-    // Return the collected outputs
     Ok(userdata.0)
   }
 
-  /// Parse a store path string into a StorePath.
+  /// Parse a store path string into a [`StorePath`].
   ///
-  /// This is a convenience method that wraps `StorePath::parse()`.
-  ///
-  /// # Arguments
-  ///
-  /// * `path` - The store path string (e.g., "/nix/store/...")
+  /// Convenience wrapper around [`StorePath::parse`].
   ///
   /// # Errors
   ///
@@ -280,11 +318,134 @@ impl Store {
     StorePath::parse(&self._context, self, path)
   }
 
+  /// Check whether a store path is present and valid in the store.
+  ///
+  /// Returns `true` if the path exists in the store's database.
+  #[must_use]
+  pub fn is_valid_path(&self, path: &StorePath) -> bool {
+    // SAFETY: context, store, and path are valid
+    unsafe {
+      sys::nix_store_is_valid_path(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        path.inner.as_ptr(),
+      )
+    }
+  }
+
+  /// Resolve the real filesystem path for a store path.
+  ///
+  /// For content-addressed stores (e.g., a binary cache) this may differ
+  /// from the store path itself.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the path cannot be resolved.
+  pub fn real_path(&self, path: &StorePath) -> Result<String> {
+    // SAFETY: context, store, and path are valid; callback is safe
+    let result = unsafe {
+      string_from_callback(|cb, ud| {
+        sys::nix_store_real_path(
+          self._context.as_ptr(),
+          self.inner.as_ptr(),
+          path.inner.as_ptr(),
+          cb,
+          ud,
+        );
+      })
+    };
+    result.ok_or(Error::NullPointer)
+  }
+
+  /// Get the URI identifying this store (e.g., `"local"` or
+  /// `"https://cache.nixos.org"`).
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the URI cannot be retrieved.
+  pub fn uri(&self) -> Result<String> {
+    // SAFETY: context and store are valid; callback is safe
+    let result = unsafe {
+      string_from_callback(|cb, ud| {
+        sys::nix_store_get_uri(
+          self._context.as_ptr(),
+          self.inner.as_ptr(),
+          cb,
+          ud,
+        );
+      })
+    };
+    result.ok_or(Error::NullPointer)
+  }
+
+  /// Get the store directory (e.g., `"/nix/store"`).
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the directory cannot be retrieved.
+  pub fn store_dir(&self) -> Result<String> {
+    // SAFETY: context and store are valid; callback is safe
+    let result = unsafe {
+      string_from_callback(|cb, ud| {
+        sys::nix_store_get_storedir(
+          self._context.as_ptr(),
+          self.inner.as_ptr(),
+          cb,
+          ud,
+        );
+      })
+    };
+    result.ok_or(Error::NullPointer)
+  }
+
+  /// Get the version string of the store daemon.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the version cannot be retrieved.
+  pub fn version(&self) -> Result<String> {
+    // SAFETY: context and store are valid; callback is safe
+    let result = unsafe {
+      string_from_callback(|cb, ud| {
+        sys::nix_store_get_version(
+          self._context.as_ptr(),
+          self.inner.as_ptr(),
+          cb,
+          ud,
+        );
+      })
+    };
+    result.ok_or(Error::NullPointer)
+  }
+
+  /// Copy the closure of `path` from `self` into `dst_store`.
+  ///
+  /// This copies the store path and all its transitive dependencies.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the copy operation fails.
+  pub fn copy_closure(
+    &self,
+    dst_store: &Store,
+    path: &StorePath,
+  ) -> Result<()> {
+    // SAFETY: context, src store, dst store, and path are valid
+    let err = unsafe {
+      sys::nix_store_copy_closure(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        dst_store.as_ptr(),
+        path.inner.as_ptr(),
+      )
+    };
+    check_err(unsafe { self._context.as_ptr() }, err)
+  }
 }
 
 impl Drop for Store {
   fn drop(&mut self) {
-    // SAFETY: We own the store and it's valid until drop
+    // SAFETY: We own the store and it is valid until drop
     unsafe {
       sys::nix_store_free(self.inner.as_ptr());
     }
@@ -297,6 +458,8 @@ unsafe impl Sync for Store {}
 
 #[cfg(test)]
 mod tests {
+  use std::sync::Arc;
+
   use serial_test::serial;
 
   use super::*;
@@ -314,19 +477,17 @@ mod tests {
     let ctx = Arc::new(Context::new().expect("Failed to create context"));
     let store = Store::open(&ctx, None).expect("Failed to open store");
 
-    // Try parsing a well-formed store path
-    // Note: This may fail if the path doesn't exist in the store
-    let result =
-      StorePath::parse(&ctx, &store, "/nix/store/00000000000000000000000000000000-test");
+    // Well-formed path; may or may not exist in the local store
+    let result = StorePath::parse(
+      &ctx,
+      &store,
+      "/nix/store/00000000000000000000000000000000-test",
+    );
 
-    // We don't assert success here because the path might not exist
-    // This test mainly checks that the API works correctly
     match result {
-      Ok(_path) => {
-        // Successfully parsed the path
-      },
-      Err(_) => {
-        // Path doesn't exist or is invalid, which is expected
+      Ok(_) | Err(_) => {
+        // Either outcome is acceptable; we just verify the API does not
+        // panic or invoke UB
       },
     }
   }
@@ -337,22 +498,62 @@ mod tests {
     let ctx = Arc::new(Context::new().expect("Failed to create context"));
     let store = Store::open(&ctx, None).expect("Failed to open store");
 
-    // Try to get a valid store path by parsing
-    // Note: This test is somewhat limited without a guaranteed valid path
-    if let Ok(path) =
-      StorePath::parse(&ctx, &store, "/nix/store/00000000000000000000000000000000-test")
-    {
+    if let Ok(path) = StorePath::parse(
+      &ctx,
+      &store,
+      "/nix/store/00000000000000000000000000000000-test",
+    ) {
       let cloned = path.clone();
-
-      // Assert that the cloned path has the same name as the original
-      let original_name = path.name().expect("Failed to get original path name");
-      let cloned_name = cloned.name().expect("Failed to get cloned path name");
-
-      assert_eq!(original_name, cloned_name, "Cloned path should have the same name as original");
+      let original_name = path.name().expect("Failed to get original name");
+      let cloned_name = cloned.name().expect("Failed to get cloned name");
+      assert_eq!(
+        original_name, cloned_name,
+        "Cloned path should have the same name"
+      );
     }
   }
 
-  // Note: test_realize is not included because it requires a valid store path
-  // to realize, which we can't guarantee in a unit test. Integration tests
-  // would be more appropriate for testing realize() with actual derivations.
+  #[test]
+  #[serial]
+  fn test_store_uri() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store = Store::open(&ctx, None).expect("Failed to open store");
+    let uri = store.uri().expect("Failed to get store URI");
+    assert!(!uri.is_empty(), "Store URI should not be empty");
+  }
+
+  #[test]
+  #[serial]
+  fn test_store_dir() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store = Store::open(&ctx, None).expect("Failed to open store");
+    let dir = store.store_dir().expect("Failed to get store directory");
+    assert!(!dir.is_empty(), "Store directory should not be empty");
+  }
+
+  #[test]
+  #[serial]
+  fn test_store_version() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store = Store::open(&ctx, None).expect("Failed to open store");
+    let ver = store.version().expect("Failed to get store version");
+    assert!(!ver.is_empty(), "Store version should not be empty");
+  }
+
+  #[test]
+  #[serial]
+  fn test_store_is_valid_path() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store = Store::open(&ctx, None).expect("Failed to open store");
+
+    if let Ok(path) = StorePath::parse(
+      &ctx,
+      &store,
+      "/nix/store/00000000000000000000000000000000-test",
+    ) {
+      // A random hash is almost certainly not valid
+      let valid = store.is_valid_path(&path);
+      assert!(!valid, "Random path should not be valid in the store");
+    }
+  }
 }
