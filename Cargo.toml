@@ -8,8 +8,8 @@ edition      = "2024"
 license      = "MIT"
 readme       = true
 repository   = "https://github.com/notashelf/nix-bindings"
-rust-version = "1.85"
-version      = "0.2328.0"
+rust-version = "1.85.0"
+version      = "0.2328.1"
 
 [workspace.dependencies]
 nix-bindings-sys = { path = "./nix-bindings-sys", version = "0.2328.0" }

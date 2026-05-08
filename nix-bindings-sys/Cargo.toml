@@ -3,11 +3,11 @@ name                   = "nix-bindings-sys"
 description            = "Raw, unsafe FFI bindings to the Nix C API"
 edition.workspace      = true
 version.workspace      = true
-readme.workspace       = true
 repository.workspace   = true
 rust-version.workspace = true
 license.workspace      = true
 publish                = true
+readme                 = "./README.md"
 
 [package.metadata.docs.rs]
 targets = [ "x86_64-unknown-linux-gnu" ]
