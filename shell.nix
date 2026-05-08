@@ -1,14 +1,17 @@
 {pkgs ? import <nixpkgs> {}}: let
-  # FIXME: we eventually want to allow building for various Nix versions
-  # in the same dev shell. Instead of a 'nixForBindings' variable *here*
-  # it might be nicer to take environment variables which the build system
-  # can respect to build them using the appropriate Nix version.
+  # XXX: update comment or pin specific version on `nix flake update`.
+  # Generally the policy is to use the version corresponding to `pkgs.nix`'s
+  # in nixos-stable. Fortunately the C API does not move fast enough, so
+  # there is a degree of forward-compatibility.
   nixForBindings = pkgs.nixVersions.nix_2_32;
   inherit (pkgs.rustc) llvmPackages;
 in
   pkgs.mkShell {
     name = "nix-bindings";
-    packages = with pkgs; [
+
+    strictDeps = true;
+    nativeBuildInputs = with pkgs; [
+      pkg-config
       cargo
       rustc
       llvmPackages.lld
@@ -24,14 +27,9 @@ in
       cargo-nextest
     ];
 
-    nativeBuildInputs = with pkgs; [
-      nixForBindings.dev
-      pkg-config
-      glibc.dev
-    ];
-
     buildInputs = [
-      nixForBindings
+      nixForBindings.dev
+      pkgs.glibc.dev
     ];
 
     env = let
