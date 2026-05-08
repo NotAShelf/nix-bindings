@@ -7,19 +7,23 @@
 //! # Quick Start
 //!
 //! ```no_run
-//! use std::sync::Arc;
+//! #[cfg(feature = "store")]
+//! {
+//!   use std::sync::Arc;
 //!
-//! use nix_bindings::{Context, EvalStateBuilder, Store};
+//!   use nix_bindings::{Context, EvalStateBuilder, Store};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let ctx = Arc::new(Context::new()?);
-//! let store = Arc::new(Store::open(&ctx, None)?);
-//! let state = EvalStateBuilder::new(&store)?.build()?;
+//!   fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let ctx = Arc::new(Context::new()?);
+//!     let store = Arc::new(Store::open(&ctx, None)?);
+//!     let state = EvalStateBuilder::new(&store)?.build()?;
 //!
-//! let result = state.eval_from_string("1 + 2", "<eval>")?;
-//! println!("Result: {}", result.as_int()?);
-//! # Ok(())
-//! # }
+//!     let result = state.eval_from_string("1 + 2", "<eval>")?;
+//!     println!("Result: {}", result.as_int()?);
+//!
+//!     Ok(())
+//!   }
+//! }
 //! ```
 //!
 //! # Value Formatting
@@ -27,44 +31,60 @@
 //! Values support multiple formatting options:
 //!
 //! ```no_run
-//! # use std::sync::Arc;
-//! # use nix_bindings::{Context, EvalStateBuilder, Store};
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! # let ctx = Arc::new(Context::new()?);
-//! # let store = Arc::new(Store::open(&ctx, None)?);
-//! # let state = EvalStateBuilder::new(&store)?.build()?;
-//! let value = state.eval_from_string("\"hello world\"", "<eval>")?;
+//! #[cfg(feature = "expr")]
+//! {
+//!   use std::sync::Arc;
 //!
-//! // Display formatting (user-friendly)
-//! println!("{}", value); // Output: hello world
+//!   use nix_bindings::{Context, EvalStateBuilder, Store};
+//!   fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let ctx = Arc::new(Context::new()?);
+//!     let store = Arc::new(Store::open(&ctx, None)?);
+//!     let state = EvalStateBuilder::new(&store)?.build()?;
+//!     let value = state.eval_from_string("\"hello world\"", "<eval>")?;
 //!
-//! // Debug formatting (with type info)
-//! println!("{:?}", value); // Output: Value::String("hello world")
+//!     // Display formatting (user-friendly)
+//!     println!("{}", value); // => hello world
 //!
-//! // Nix syntax formatting
-//! println!("{}", value.to_nix_string()?); // Output: "hello world"
-//! //
-//! # Ok(())
-//! # }
+//!     // Debug formatting (with type info)
+//!     println!("{:?}", value); // => Value::String("hello world")
+//!
+//!     // Nix syntax formatting
+//!     println!("{}", value.to_nix_string()?); // => "hello world"
+//!     //
+//!     Ok(())
+//!   }
+//! }
 //! ```
 
-mod attrs;
-pub mod external;
-pub mod flake;
-mod lists;
-pub mod primop;
-mod store;
-
+use std::fmt;
+#[cfg(any(
+  feature = "store",
+  feature = "expr",
+  feature = "flake",
+  feature = "external",
+  feature = "primop"
+))]
 use std::{
   ffi::{CStr, CString},
-  fmt,
-  path::Path,
   ptr::NonNull,
-  sync::Arc,
 };
+#[cfg(any(
+  feature = "expr",
+  feature = "flake",
+  feature = "external",
+  feature = "primop"
+))]
+use std::{path::Path, sync::Arc};
 
-#[cfg(test)] use serial_test::serial;
-pub use store::{Derivation, Store, StorePath};
+#[cfg(feature = "expr")] mod attrs;
+#[cfg(feature = "expr")] mod lists;
+
+#[cfg(feature = "external")] pub mod external;
+#[cfg(feature = "flake")] pub mod flake;
+#[cfg(feature = "primop")] pub mod primop;
+
+#[cfg(all(test, any(feature = "store", feature = "expr")))]
+use serial_test::serial;
 
 /// Raw, unsafe FFI bindings to the Nix C API.
 ///
@@ -144,6 +164,10 @@ impl From<std::ffi::NulError> for Error {
   }
 }
 
+#[cfg(feature = "store")] mod store;
+#[cfg(feature = "store")]
+pub use store::{Derivation, Store, StorePath};
+
 /// Extract a string from a Nix context using a callback-based API.
 ///
 /// Many Nix C API functions return strings via callbacks. This helper
@@ -152,6 +176,7 @@ impl From<std::ffi::NulError> for Error {
 /// # Safety
 ///
 /// `call` must invoke `callback` with a valid string pointer and length.
+#[cfg(feature = "store")]
 unsafe fn string_from_callback<F>(call: F) -> Option<String>
 where
   F: FnOnce(sys::nix_get_string_callback, *mut std::os::raw::c_void),
@@ -177,6 +202,7 @@ where
 
 /// Check a Nix error code and convert to `Result`, extracting the real
 /// error message from the context.
+#[cfg(feature = "store")]
 fn check_err(ctx: *mut sys::nix_c_context, err: sys::nix_err) -> Result<()> {
   if err == sys::nix_err_NIX_OK {
     return Ok(());
@@ -221,6 +247,7 @@ fn check_err(ctx: *mut sys::nix_c_context, err: sys::nix_err) -> Result<()> {
 /// Return the version of the Nix library being used.
 ///
 /// This is a free function that does not require a context.
+#[cfg(feature = "store")]
 #[must_use]
 pub fn nix_version() -> &'static str {
   // SAFETY: nix_version_get returns a pointer to a static string literal
@@ -235,6 +262,7 @@ pub fn nix_version() -> &'static str {
 }
 
 /// Verbosity level for Nix log output.
+#[cfg(feature = "store")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verbosity {
   /// Only errors.
@@ -255,6 +283,7 @@ pub enum Verbosity {
   Vomit,
 }
 
+#[cfg(feature = "store")]
 impl Verbosity {
   fn to_c(self) -> sys::nix_verbosity {
     match self {
@@ -274,10 +303,12 @@ impl Verbosity {
 ///
 /// This is the root object for all Nix operations. It manages the lifetime
 /// of the Nix C API context and provides automatic cleanup.
+#[cfg(feature = "store")]
 pub struct Context {
   inner: NonNull<sys::nix_c_context>,
 }
 
+#[cfg(feature = "store")]
 impl Context {
   /// Create a new Nix context.
   ///
@@ -380,6 +411,7 @@ impl Context {
   }
 }
 
+#[cfg(feature = "store")]
 impl Drop for Context {
   fn drop(&mut self) {
     // SAFETY: We own the context and it's valid until drop
@@ -389,14 +421,17 @@ impl Drop for Context {
   }
 }
 
-// SAFETY: Context can be shared between threads
+#[cfg(feature = "store")]
 unsafe impl Send for Context {}
+
+#[cfg(feature = "store")]
 unsafe impl Sync for Context {}
 
 /// Builder for Nix evaluation state.
 ///
 /// This allows configuring the evaluation environment before creating
 /// the evaluation state.
+#[cfg(feature = "expr")]
 pub struct EvalStateBuilder {
   inner:     NonNull<sys::nix_eval_state_builder>,
   store:     Arc<Store>,
@@ -404,6 +439,7 @@ pub struct EvalStateBuilder {
   skip_load: bool,
 }
 
+#[cfg(feature = "expr")]
 impl EvalStateBuilder {
   /// Create a new evaluation state builder.
   ///
@@ -472,6 +508,7 @@ impl EvalStateBuilder {
   /// # Errors
   ///
   /// Returns an error if the flake settings cannot be applied.
+  #[cfg(feature = "flake")]
   pub fn with_flake_settings(
     self,
     settings: &flake::FlakeSettings,
@@ -539,6 +576,7 @@ impl EvalStateBuilder {
   }
 }
 
+#[cfg(feature = "expr")]
 impl Drop for EvalStateBuilder {
   fn drop(&mut self) {
     // SAFETY: We own the builder and it's valid until drop
@@ -552,6 +590,7 @@ impl Drop for EvalStateBuilder {
 ///
 /// This provides the main interface for evaluating Nix expressions
 /// and creating values.
+#[cfg(feature = "expr")]
 pub struct EvalState {
   pub(crate) inner:   NonNull<sys::EvalState>,
   #[expect(dead_code, reason = "keeps the Arc<Store> alive Drop side-effects")]
@@ -559,6 +598,7 @@ pub struct EvalState {
   pub(crate) context: Arc<Context>,
 }
 
+#[cfg(feature = "expr")]
 impl EvalState {
   /// Evaluate a Nix expression from a string.
   ///
@@ -892,6 +932,7 @@ impl EvalState {
   }
 }
 
+#[cfg(feature = "expr")]
 impl Drop for EvalState {
   fn drop(&mut self) {
     // SAFETY: We own the state and it's valid until drop
@@ -901,11 +942,14 @@ impl Drop for EvalState {
   }
 }
 
-// SAFETY: EvalState can be shared between threads
+#[cfg(feature = "expr")]
 unsafe impl Send for EvalState {}
+
+#[cfg(feature = "expr")]
 unsafe impl Sync for EvalState {}
 
 /// Nix value types.
+#[cfg(feature = "expr")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueType {
   /// Thunk (unevaluated expression).
@@ -932,6 +976,7 @@ pub enum ValueType {
   External,
 }
 
+#[cfg(feature = "expr")]
 impl ValueType {
   fn from_c(value_type: sys::ValueType) -> Self {
     match value_type {
@@ -951,6 +996,7 @@ impl ValueType {
   }
 }
 
+#[cfg(feature = "expr")]
 impl fmt::Display for ValueType {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let name = match self {
@@ -975,11 +1021,13 @@ impl fmt::Display for ValueType {
 /// This represents any value in the Nix language, including primitives,
 /// collections, and functions. Values are GC-managed; this struct holds
 /// a reference count that is released on drop.
+#[cfg(feature = "expr")]
 pub struct Value<'a> {
   pub(crate) inner: NonNull<sys::nix_value>,
   pub(crate) state: &'a EvalState,
 }
 
+#[cfg(feature = "expr")]
 impl Value<'_> {
   /// Force evaluation of this value.
   ///
@@ -1405,6 +1453,7 @@ impl Value<'_> {
   }
 }
 
+#[cfg(feature = "expr")]
 impl Drop for Value<'_> {
   fn drop(&mut self) {
     // SAFETY: We hold a GC reference (automatically incremented for us by
@@ -1415,6 +1464,7 @@ impl Drop for Value<'_> {
   }
 }
 
+#[cfg(feature = "expr")]
 impl fmt::Display for Value<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self.value_type() {
@@ -1463,6 +1513,7 @@ impl fmt::Display for Value<'_> {
   }
 }
 
+#[cfg(feature = "expr")]
 impl fmt::Debug for Value<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let value_type = self.value_type();
@@ -1512,10 +1563,11 @@ impl fmt::Debug for Value<'_> {
   }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "store", feature = "expr")))]
 mod tests {
   use super::*;
 
+  #[cfg(feature = "store")]
   #[test]
   #[serial]
   fn test_context_creation() {
@@ -1523,6 +1575,7 @@ mod tests {
     // Context should be dropped automatically
   }
 
+  #[cfg(feature = "store")]
   #[test]
   #[serial]
   fn test_nix_version() {
@@ -1530,6 +1583,7 @@ mod tests {
     assert!(!version.is_empty(), "Version should not be empty");
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_eval_state_builder() {
@@ -1543,6 +1597,7 @@ mod tests {
     // State should be dropped automatically
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_simple_evaluation() {
@@ -1562,6 +1617,7 @@ mod tests {
     assert_eq!(result.as_int().expect("Failed to get int value"), 3);
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_value_types() {
@@ -1595,6 +1651,7 @@ mod tests {
     assert_eq!(str_val.as_string().expect("Failed to get string"), "hello");
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_value_construction() {
@@ -1622,6 +1679,7 @@ mod tests {
     assert_eq!(str_val.as_string().unwrap(), "hello");
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_make_list() {
@@ -1642,6 +1700,7 @@ mod tests {
     assert_eq!(list.list_len().unwrap(), 3);
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_make_attrs() {
@@ -1666,6 +1725,7 @@ mod tests {
     assert_eq!(answer.as_int().unwrap(), 42);
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_value_call() {
@@ -1685,6 +1745,7 @@ mod tests {
     assert_eq!(result.as_int().unwrap(), 42);
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_value_copy() {
@@ -1701,6 +1762,7 @@ mod tests {
     assert_eq!(copy.as_int().unwrap(), 7);
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_as_string_with_context_plain() {
@@ -1725,6 +1787,7 @@ mod tests {
     );
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_eval_from_file() {
@@ -1746,6 +1809,7 @@ mod tests {
     assert_eq!(result.as_int().unwrap(), 2);
   }
 
+  #[cfg(feature = "expr")]
   #[test]
   #[serial]
   fn test_no_load_config() {

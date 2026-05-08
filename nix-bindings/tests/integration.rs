@@ -1,3 +1,5 @@
+#![cfg(feature = "expr")]
+
 use std::{process::Command, sync::Arc};
 
 use nix_bindings::{Context, EvalStateBuilder, Store, ValueType};
