@@ -1,20 +1,25 @@
-// Pure C API for store operations
+// This file is a meta-wrapper for bindgen. Each section is guarded by
+// a preprocessor define so that only the headers mapped to enabled Cargo
+// features are actually included.
+
+#ifdef FEATURE_STORE
 #include <nix_api_store.h>
+#endif
 
-// Pure C API for error handling
+#ifdef FEATURE_UTIL
 #include <nix_api_util.h>
-
-// Pure C API for the Nix evaluator
-#include <nix_api_expr.h>
-
-// Pure C API for external values
 #include <nix_api_external.h>
+#endif
 
-// Pure C API for value manipulation
+#ifdef FEATURE_EXPR
+#include <nix_api_expr.h>
 #include <nix_api_value.h>
+#endif
 
-// Pure C API for flake support
+#ifdef FEATURE_FLAKE
 #include <nix_api_flake.h>
+#endif
 
-// Pure C API for main/CLI support
+#ifdef FEATURE_MAIN
 #include <nix_api_main.h>
+#endif

@@ -24,17 +24,6 @@ fn main() {
   // Tell cargo to invalidate the built crate whenever the wrapper changes
   println!("cargo:rerun-if-changed=include/wrapper.h");
 
-  // Use pkg-config to find nix-store include and link paths
-  // This NEEDS to be included, or otherwise `nix_api_store.h` cannot
-  // be found.
-  let nix_libraries = [
-    "nix-main-c",
-    "nix-expr-c",
-    "nix-store-c",
-    "nix-util-c",
-    "nix-flake-c",
-  ];
-
   // Dynamically get GCC's include path for standard headers (e.g., stdbool.h)
   let gcc_include = Command::new("gcc")
     .arg("-print-file-name=include")
@@ -49,20 +38,37 @@ fn main() {
     .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
     .formatter(bindgen::Formatter::Rustfmt)
     .rustfmt_configuration_file(std::fs::canonicalize(".rustfmt.toml").ok())
-    .parse_callbacks(Box::new(ProcessComments));
+    .parse_callbacks(Box::new(ProcessComments))
+    .clang_arg(format!("-I{gcc_include}"));
 
-  // Add all pkg-config include paths and GCC's include path to bindgen
-  for nix_lib in nix_libraries {
-    let lib = pkg_config::probe_library(nix_lib)
-      .unwrap_or_else(|_| panic!("Unable to find .pc file for {nix_lib}"));
-    for include_path in lib.include_paths {
-      builder = builder.clang_arg(format!("-I{}", include_path.display()));
-    }
-    for link_file in lib.link_files {
-      println!("cargo:rustc-link-lib={}", link_file.display());
+  // For each enabled feature, probe the matching C library and add the
+  // corresponding preprocessor define so wrapper.h includes the right headers.
+  //
+  // (Cargo feature env var, preprocessor define, pkg-config lib name)
+  let libraries: &[(&str, &str, &str)] = &[
+    ("CARGO_FEATURE_STORE", "FEATURE_STORE", "nix-store-c"),
+    ("CARGO_FEATURE_EXPR", "FEATURE_EXPR", "nix-expr-c"),
+    ("CARGO_FEATURE_UTIL", "FEATURE_UTIL", "nix-util-c"),
+    ("CARGO_FEATURE_FLAKE", "FEATURE_FLAKE", "nix-flake-c"),
+    ("CARGO_FEATURE_MAIN", "FEATURE_MAIN", "nix-main-c"),
+  ];
+
+  for (feat_var, define, lib_name) in libraries {
+    if env::var(feat_var).is_ok() {
+      let lib = pkg_config::probe_library(lib_name)
+        .unwrap_or_else(|_| panic!("Unable to find .pc file for {lib_name}"));
+
+      for include_path in lib.include_paths {
+        builder = builder.clang_arg(format!("-I{}", include_path.display()));
+      }
+
+      for link_file in lib.link_files {
+        println!("cargo:rustc-link-lib={}", link_file.display());
+      }
+
+      builder = builder.clang_arg(format!("-D{define}"));
     }
   }
-  builder = builder.clang_arg(format!("-I{gcc_include}"));
 
   // Write the bindings to the $OUT_DIR/bindings.rs file
   let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
