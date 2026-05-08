@@ -2,6 +2,8 @@
 
 # nix-bindings
 
+[![Rust Version](https://img.shields.io/badge/rust-1.85.0+-orange.svg)](https://www.rust-lang.org)
+
 [C API]: https://nix.dev/manual/nix/2.32/c-api
 [Nix]: https://nixos.org
 [rust-bindgen]: https://github.com/rust-lang/rust-bindgen
@@ -10,29 +12,33 @@
 [discouraged by Bindgen]: https://rust-lang.github.io/rust-bindgen/cpp.html
 [doxygen-bindgen]: https://github.com/rich-ayr/doxygen-bindgen
 
-Rust FFI bindings and high-level wrapper for the experimental [C API] of the
-[Nix] build tool. The goal of this repository is to provide generated bindings
-for the C API, ultimately use those low-level bindings that provide direct,
-programmatic access to Nix store operations from Rust and use them to construct
-a safe, high-level API to interact with Nix without ever shelling out to the Nix
-CLI with the addition of a large test suite and [more accessible documentation].
-[^1]
+Rust FFI bindings and a robust high-level wrapper for the experimental [C API]
+of the [Nix] build tool.
+
+The goal of this repository is to provide generated bindings for the Nix C API,
+then use those low-level bindings to build a safe, high-level Rust API for
+interacting with Nix directly. In particular, `nix-bindings` aims to provide
+programmatic access to Nix store operations from Rust without ever spawning
+processes to interact with the Nix CLI.
+
+The repository contains a large test suite, examples, safety documentation, and
+[more accessible documentation] for the generated bindings. [^1]
 
 [^1]: The Doxygen format used by Nix in the C API is not very easily parsable.
     The [doxygen-bindgen] crate does a pretty good job at this, but the
-    documentation for the raw bindings, i.e., `nix-bindings-sys` are not always
-    up to standard. Either way, consider this a "work in progress" and something
+    documentation for the raw bindings, i.e. `nix-bindings-sys`, is not always
+    up to standard. Either way, consider this a work in progress and something
     that will be improved over time as time and resources allow.
 
 The **low-level** bindings generated via [rust-bindgen] are located in the
-`nix-bindings-sys` crate located in [nix-bindings-sys/](./nix-bindings-sys). The
-low-level bindings crate covers **all public Nix C API headers** with support
-for store, evaulator, error and flake APIs.
+`nix-bindings-sys` crate in [`nix-bindings-sys/`](./nix-bindings-sys). By
+default, the low-level bindings crate covers **all public Nix C API headers**,
+including the store, evaluator, error, flake, and main APIs.
 
-The [`nix-bindings`](./nix-bindings) crate wraps `nix-bindings-sys` and attempts
-to provide a more robust API for interacting with Nix using Rust through a
-cleaner interface with additional safety documentation, testing, examples and
-more. While all low-level logic is maintained in `nix-bindings-sys`, most
+The [`nix-bindings/`](./nix-bindings) crate wraps `nix-bindings-sys` and
+attempts to provide a more robust, **high-level** API for interacting with Nix
+using Rust through a cleaner interface with additional safety documentation,
+testing, examples and more.
 
 > [!NOTE]
 > Due to the limitations of rust-bindgen, there is no compatibility outside the
@@ -44,14 +50,18 @@ more. While all low-level logic is maintained in `nix-bindings-sys`, most
 
 ## Repository Layout
 
+[![nix-bindings](https://img.shields.io/crates/v/nix-bindings)](https://crates.io/crates/nix-bindings)
+[![nix-bindings-sys](https://img.shields.io/crates/v/nix-bindings-sys)](https://crates.io/crates/nix-bindings-sys)
+[![Documentation](https://img.shields.io/docsrs/nix-bindings/latest)](https://docs.rs/nix-bindings/latest/)
+
 For your convenience, this crate has been structured in a way that allows
 providing low-level and high-level access to the C API at the same time through
 different sub-crates. At the moment the crate layout is as follows:
 
-```plaintext
+```sh
 .
 ├── nix-bindings-sys # raw, unsafe FFI bindings to the Nix C API
-└── nix-bindings # high-level, safe Rust API built on top of `nix-bindings-sys`
+└── nix-bindings     # high-level, safe Rust API built on top of `nix-bindings-sys`
 ```
 
 The `nix-bindings-sys` crate contains build wrapper (`build.rs`), as well as
@@ -62,149 +72,11 @@ repository, and act as safeguards against wildly breaking changes that affect
 downstream. The `nix-bindings` crate contains the hand-written wrappers around
 `nix-bindings-sys` and has additional helpers that you may be interested in.
 
-### `nix-bindings-sys`
+[rendered documentation]: https://notashelf.github.io/nix-bindings/
 
-This crate is limited with the features of the C API, which is mostly
-undocumented and hidden away for the time being. Regardless, some of features
-provided by this crate (following the C API) are as follows:
-
-- Open and interact with Nix stores (`nix_store_open`, `nix_store_realise`,
-  etc.)
-- Evaluate Nix expressions and call Nix functions (`nix_expr_eval_from_string`,
-  `nix_value_call`, etc.)
-
-Additionally, with limited success nix-bindings allows you to:
-
-- Manipulate store paths and values
-- Access and set Nix configuration settings
-- Retrieve and handle errors programmatically
-
-All while using the generated Rust bindings.
-
-#### Usage
-
-Add nix-bindings to your `Cargo.toml`:
-
-```toml
-[dependencies]
-nix-bindings = "2.32.4" # your Nix version must match the crate version.
-```
-
-You might also use a local path or a Git remote in your `Cargo.toml` as you see
-fit. New versions will be published after testing, and will be supported until
-upstream deprecates the version bindings were built for.
-
-Do note that you _must_ have a compatible version of the Nix C API and
-development headers available. The build script uses `pkg-config` to locate the
-necessary libraries and headers from the environment, which is bootstrapped
-using Nix. You may look into `shell.nix` to gen an idea of what is required to
-build nix-bindings. Please do not create issues for build errors unless you have
-verified that your environment setup is correct.
-
-#### Examples
-
-There are several examples provided [`examples/`](./nix-bindings-sys/examples)
-directory to serve as small, self-contained examples in case you decide to use
-this crate. You may run them with `cargo run --example <example>`, e.g.,
-`cargo run --example eval_basic`. In addition to providing results, the code in
-the examples directory can help guide you to use this library.
-
-#### Testing
-
-`nix-bindings-sys` is _meticulously_ tested for the sake of added safety and
-soundness on top of the C API. The test suite is available in the
-[`tests/`](./nix-bindings-sys/tests) directory and can be ran easily using
-`cargo nextest run`. For the time being the tests cover:
-
-- Store operations
-- Context management
-- Configuration
-- Expression evaluation
-- Thunks
-
-The tests are integration style, and interact with a real Nix installation. If
-you believe a case is not appropriately tested, please create an issue. PRs are
-also welcome to extend test cases :)
-
-### `nix-bindings`
-
-This crate provides a safe, ergonomic Rust API built on top of
-`nix-bindings-sys`. It wraps the raw FFI calls in idiomatic Rust types with
-automatic resource management, type-safe conversions, and comprehensive error
-handling. The crate is organized into the following public modules:
-
-- **`store`**: Store, store path, and derivation management (opening stores,
-  parsing store paths, realizing derivations, copying closures)
-- **`attrs`**: Attribute set access (`get_attr`, `has_attr`, `attr_keys`,
-  `AttrIterator`)
-- **`lists`**: List operations (`list_len`, `list_get`, `list_iter`,
-  `ListIterator`)
-- **`flake`**: Flake support (`FlakeSettings`, `FlakeReference`, `LockedFlake`,
-  `LockFlags`, `FetchersSettings`)
-- **`primop`**: Custom Nix primitive operations via Rust closures (global
-  builtins or value-embedded)
-- **`external`**: Embed arbitrary Rust values as Nix external values with safe
-  downcasting
-
-[crate documentation]: https://notashelf.github.io/nix-bindings/nix_bindings/index.html
-
-A few key types are provided at the crate root. Namely: `Context`, `EvalState`,
-`EvalStateBuilder`, `Store`, `StorePath`, `Derivation`, `Value` and verbosity
-may be used to manage C API context lifetime, expression evaluation, store
-handle, derivation from JSON and Nix value with type-safe accessors
-specifically. See [crate documentation] for more details.
-
-#### Usage
-
-Add nix-bindings to your `Cargo.toml`:
-
-```toml
-[dependencies]
-nix-bindings = "2.32.4"
-```
-
-Quick example evaluating a Nix expression:
-
-```rust
-use std::sync::Arc;
-use nix_bindings::{Context, EvalStateBuilder, Store};
-
-let ctx = Arc::new(Context::new()?);
-let store = Arc::new(Store::open(&ctx, None)?);
-let state = EvalStateBuilder::new(&store)?.build()?;
-
-let result = state.eval_from_string("1 + 2", "<eval>")?;
-println!("Result: {}", result.as_int()?);
-```
-
-#### Testing
-
-`nix-bindings` includes both unit tests (inline in each module) and integration
-tests in [`tests/`](./nix-bindings/tests). Run them with:
-
-```sh
-# cargo-nextest is provided by the devshell, and provides faster test invocation
-$ cargo nextest run -p nix-bindings
-
-# You may use plain cargo test if you don't have cargo-nextest
-$ cargo test -p nix-bindings
-```
-
-The test suite is rather large, and it covers a lot including:
-
-- Store operations (open, query URI/dir/version, path validation)
-- Expression evaluation (arithmetic, strings, booleans, functions,
-  interpolation)
-- Value construction and type conversion (int, float, bool, string, null)
-- Attribute set manipulation (get, has, keys, iteration)
-- List operations (length, indexing, iteration)
-- String context handling (plain strings, store-path contexts)
-- Derivation realization
-- Resource cleanup (ensuring no leaks across repeated create/drop cycles)
-- Flake settings and lock flags
-- Custom primops (value-embedded)
-- External values (creation, downcast, type-safe retrieval)
-- Error handling (parse errors, type mismatches)
+Please see each crate's README for installation details. Additionally, the
+[rendered documentation] contains documentation generated from Rust code
+comments, examples and everything else provided by individual crate READMEs.
 
 ## Contributing
 
@@ -221,6 +93,44 @@ open an issue or submit a PR with a minimal reproduction. Note that some issues
 are to be filed _upstream_, so make sure you try the C API _directly_ before
 filing an issue with the bindings. I am not going to close any issues for
 missing C testing, but it will make our lives easier in identifying the issue.
+
+### Versioning
+
+This crate uses a normalized semver scheme derived from the upstream Nix
+version:
+
+| Nix version     | Crate version |
+| --------------- | ------------- |
+| 2.32.7          | `0.2327.0`    |
+| 2.32.7 + hotfix | `0.2327.1`    |
+
+The crate version is `0.<major><minor><patch>.<crate_patch>`:
+
+- The **minor** component encodes the full Nix version after the leading zero.
+  For example, Nix `2.32.7` becomes `0.2327.0` (concatenation:
+  `"2" + "32" + "7" = 2327`).
+- The **patch** component is reserved for hotfixes to the Rust bindings that do
+  not change the target Nix version. A fix to `0.2327.0` ships as `0.2327.1`.
+
+Cargo's semver rules for `0.x.y` ensure that `^0.2327.0` will not pull in
+`0.2328.0` (which targets a different Nix patch release) or `0.2330.0` (which
+targets a different Nix minor release). Dependency consumers must update
+explicitly when the target Nix version changes.
+
+### Release branches
+
+Each supported Nix release has a long-lived branch:
+
+- `main` tracks the latest Nix version.
+- `release/v0.2324` tracks hotfixes for bindings targeting Nix `2.32.4` (branch
+  created from `v0.2324.0`).
+- `release/v0.2327` tracks hotfixes for bindings targeting Nix `2.32.7` (branch
+  created from `v0.2327.0`).
+
+The version in `Cargo.toml` on a release branch is always the **next** pending
+patch (e.g., `0.2324.1` after `v0.2324.0` was published). The `publish` workflow
+tags the current version on merge, publishes it, then bumps the branch to the
+next patch.
 
 ## Caveats
 

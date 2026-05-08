@@ -1,7 +1,6 @@
 # Ignore everything by default
 /*
 !/
-target/
 
 !/nix-bindings
 !/nix-bindings-sys
@@ -21,3 +20,7 @@ target/
 # Nix
 !/flake.nix
 !/shell.nix
+
+# Documentation
+!/README.md
+!/docs
