@@ -16,7 +16,7 @@ jobs:
     if: >
       (github.event_name == 'pull_request_target' && github.event.pull_request.merged) && (
         (github.event.action == 'labeled' && startsWith(github.event.label.name, 'backport ')) ||
-        (github.event.action == 'closed' && contains(toJSON(github.event.pull_request.labels.*.name), '"backport '))
+        (github.event.action == 'closed' && contains(join(github.event.pull_request.labels.*.name, ' '), 'backport '))
       ) || (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
