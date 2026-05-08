@@ -20,7 +20,7 @@ jobs:
       - run: echo "Not a release branch push or version tag, skipping"
 
   tag:
-    if: startsWith(github.ref, 'refs/heads/release/') && startsWith(github.event.head_commit.message, 'Merge pull request #')
+    if: startsWith(github.ref, 'refs/heads/release/') && startsWith(github.event.head_commit.message, 'Merge pull request')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
