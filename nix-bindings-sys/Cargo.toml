@@ -12,6 +12,15 @@ publish                = true
 [package.metadata.docs.rs]
 targets = [ "x86_64-unknown-linux-gnu" ]
 
+[features]
+default = [ "full" ]
+expr    = [  ]
+flake   = [  ]
+full    = [ "store", "expr", "util", "flake", "main" ]
+main    = [  ]
+store   = [  ]
+util    = [  ]
+
 [lib]
 path = "lib.rs"
 
