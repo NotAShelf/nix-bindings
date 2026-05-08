@@ -3,6 +3,8 @@ name: Backport
 on:
   pull_request_target:
     types: [closed, labeled]
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
@@ -12,10 +14,9 @@ jobs:
   backport:
     runs-on: ubuntu-latest
     if: >
-      (
-        github.event_name == 'pull_request_target' &&
-        github.event.pull_request.merged &&
-        (github.event.action != 'labeled' || contains(toJSON(github.event.pull_request.labels.*.name), '"backport '))
+      (github.event_name == 'pull_request_target' && github.event.pull_request.merged) && (
+        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'backport ')) ||
+        (github.event.action == 'closed' && contains(toJSON(github.event.pull_request.labels.*.name), '"backport '))
       ) || (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
@@ -25,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.ref }}
           fetch-depth: 0
 
       - name: Create backport PRs
