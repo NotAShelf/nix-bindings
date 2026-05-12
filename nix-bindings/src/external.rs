@@ -213,10 +213,10 @@ static VTABLE: sys::NixCExternalValueDesc = {
     res: *mut sys::nix_string_return,
   ) {
     let payload = unsafe { ErasedPayload::from_void(self_) };
-    if let Some(s) = unsafe { (payload.coerce_fn)(payload.data) } {
-      if let Ok(cs) = CString::new(s) {
-        unsafe { sys::nix_set_string_return(res, cs.as_ptr()) };
-      }
+    if let Some(s) = unsafe { (payload.coerce_fn)(payload.data) }
+      && let Ok(cs) = CString::new(s)
+    {
+      unsafe { sys::nix_set_string_return(res, cs.as_ptr()) };
     }
   }
 
