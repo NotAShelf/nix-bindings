@@ -87,6 +87,80 @@ impl StorePath {
     result.ok_or(Error::NullPointer)
   }
 
+  /// Get the hash component of the store path as raw bytes.
+  ///
+  /// The 20-byte hash is decoded from the "nix32" encoding
+  /// in the store path. For example, for
+  /// `"/nix/store/abc123...-hello-1.0"` this returns the raw
+  /// hash bytes corresponding to `"abc123..."`.
+  ///
+  /// # Returns
+  ///
+  /// The raw 20-byte hash.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the hash cannot be retrieved.
+  pub fn hash_part(&self) -> Result<[u8; 20]> {
+    let mut hash = sys::nix_store_path_hash_part { bytes: [0u8; 20] };
+
+    // SAFETY: context and store path are valid
+    let err = unsafe {
+      sys::nix_store_path_hash(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        &mut hash,
+      )
+    };
+    check_err(unsafe { self._context.as_ptr() }, err)?;
+
+    Ok(hash.bytes)
+  }
+
+  /// Create a `StorePath` from its constituent hash and name parts.
+  ///
+  /// Unlike [`parse`](StorePath::parse), this does not require a `Store`
+  /// reference or the `/nix/store` prefix.
+  ///
+  /// # Arguments
+  ///
+  /// * `hash` - The 20-byte raw hash (as produced by
+  ///   [`hash_part`](Self::hash_part)).
+  /// * `name` - The name component (e.g., `"hello-1.0"`).
+  ///
+  /// # Returns
+  ///
+  /// A new `StorePath`.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the path cannot be created.
+  pub fn from_parts(
+    context: &Arc<Context>,
+    hash: &[u8; 20],
+    name: &str,
+  ) -> Result<Self> {
+    let hash_struct = sys::nix_store_path_hash_part { bytes: *hash };
+    let name_c = CString::new(name)?;
+
+    // SAFETY: context, hash, and name are valid
+    let path_ptr = unsafe {
+      sys::nix_store_create_from_parts(
+        context.as_ptr(),
+        &hash_struct,
+        name_c.as_ptr(),
+        name.len(),
+      )
+    };
+
+    let inner = NonNull::new(path_ptr).ok_or(Error::NullPointer)?;
+
+    Ok(StorePath {
+      inner,
+      _context: Arc::clone(context),
+    })
+  }
+
   /// Get the raw store path pointer.
   pub(crate) unsafe fn as_ptr(&self) -> *mut sys::StorePath {
     self.inner.as_ptr()
@@ -180,6 +254,71 @@ impl Derivation {
       inner,
       _context: Arc::clone(&self._context),
     })
+  }
+
+  /// Read a derivation from the store by its store path.
+  ///
+  /// # Returns
+  ///
+  /// The derivation object associated with the given `.drv` path.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the derivation cannot be read.
+  pub fn from_store_path(
+    context: &Arc<Context>,
+    store: &Store,
+    path: &StorePath,
+  ) -> Result<Self> {
+    // SAFETY: context, store, and path are valid
+    let drv_ptr = unsafe {
+      sys::nix_store_drv_from_store_path(
+        context.as_ptr(),
+        store.as_ptr(),
+        path.inner.as_ptr(),
+      )
+    };
+
+    if drv_ptr.is_null() {
+      return Err(Error::NullPointer);
+    }
+
+    Ok(Derivation {
+      inner:    drv_ptr,
+      _context: Arc::clone(context),
+    })
+  }
+
+  /// Serialize this derivation to its JSON representation.
+  ///
+  /// # Returns
+  ///
+  /// The derivation as a JSON string.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if serialization fails.
+  pub fn to_json(&self) -> Result<String> {
+    // SAFETY: inner is valid, callback matches expected signature
+    let result = unsafe {
+      string_from_callback(|cb, ud| {
+        sys::nix_derivation_to_json(self._context.as_ptr(), self.inner, cb, ud);
+      })
+    };
+    result.ok_or(Error::NullPointer)
+  }
+}
+
+impl Clone for Derivation {
+  fn clone(&self) -> Self {
+    // SAFETY: self.inner is valid
+    let cloned_ptr = unsafe { sys::nix_derivation_clone(self.inner) };
+    let inner = cloned_ptr; // raw pointer, Drop will free
+
+    Derivation {
+      inner,
+      _context: Arc::clone(&self._context),
+    }
   }
 }
 
@@ -440,6 +579,143 @@ impl Store {
       )
     };
     check_err(unsafe { self._context.as_ptr() }, err)
+  }
+
+  /// Copy a single path from this store into `dst_store`.
+  ///
+  /// Unlike [`copy_closure`](Self::copy_closure), this copies only the
+  /// path itself, not its dependencies.
+  ///
+  /// # Arguments
+  ///
+  /// * `repair` - Whether to repair the path if it is corrupted.
+  /// * `check_sigs` - Whether to verify path signatures before copying.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the copy operation fails.
+  pub fn copy_path(
+    &self,
+    dst_store: &Store,
+    path: &StorePath,
+    repair: bool,
+    check_sigs: bool,
+  ) -> Result<()> {
+    // SAFETY: all pointers are valid
+    let err = unsafe {
+      sys::nix_store_copy_path(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        dst_store.as_ptr(),
+        path.inner.as_ptr(),
+        repair,
+        check_sigs,
+      )
+    };
+    check_err(unsafe { self._context.as_ptr() }, err)
+  }
+
+  /// Enumerate the filesystem closure of a store path.
+  ///
+  /// Calls `callback` once for each store path in the closure (in no
+  /// particular order).
+  ///
+  /// # Arguments
+  ///
+  /// * `flip_direction` - If false, return paths referenced by paths in the
+  ///   closure (forward). If true, return paths that reference paths in the
+  ///   closure (backward).
+  /// * `include_outputs` - For derivations, also include their outputs.
+  /// * `include_derivers` - For outputs, also include the derivation that
+  ///   produced them.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the operation fails.
+  pub fn get_fs_closure<F>(
+    &self,
+    path: &StorePath,
+    flip_direction: bool,
+    include_outputs: bool,
+    include_derivers: bool,
+    mut callback: F,
+  ) -> Result<()>
+  where
+    F: FnMut(&StorePath),
+  {
+    type Userdata<'a> = (&'a mut dyn FnMut(&StorePath), Arc<Context>);
+
+    unsafe extern "C" fn closure_callback(
+      _context: *mut sys::nix_c_context,
+      userdata: *mut std::os::raw::c_void,
+      sp: *const sys::StorePath,
+    ) {
+      let data = unsafe { &mut *(userdata as *mut Userdata<'_>) };
+      let (cb, ctx) = data;
+
+      if !sp.is_null() {
+        let cloned = unsafe { sys::nix_store_path_clone(sp as *mut _) };
+        if let Some(inner) = NonNull::new(cloned) {
+          let p = StorePath {
+            inner,
+            _context: Arc::clone(ctx),
+          };
+          cb(&p);
+        }
+      }
+    }
+
+    let mut userdata: Userdata<'_> =
+      (&mut callback, Arc::clone(&self._context));
+    let userdata_ptr =
+      &mut userdata as *mut Userdata<'_> as *mut std::os::raw::c_void;
+
+    // SAFETY: all pointers are valid
+    let err = unsafe {
+      sys::nix_store_get_fs_closure(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        path.inner.as_ptr(),
+        flip_direction,
+        include_outputs,
+        include_derivers,
+        userdata_ptr,
+        Some(closure_callback),
+      )
+    };
+    check_err(unsafe { self._context.as_ptr() }, err)
+  }
+
+  /// Look up the full store path from a hash part.
+  ///
+  /// # Returns
+  ///
+  /// `Some(StorePath)` if a matching path exists, `None` otherwise.
+  pub fn query_path_from_hash_part(
+    &self,
+    hash: &str,
+  ) -> Result<Option<StorePath>> {
+    let hash_c = CString::new(hash)?;
+
+    // SAFETY: context, store, and hash_c are valid
+    let path_ptr = unsafe {
+      sys::nix_store_query_path_from_hash_part(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        hash_c.as_ptr(),
+      )
+    };
+
+    if path_ptr.is_null() {
+      return Ok(None);
+    }
+
+    let inner = NonNull::new(path_ptr).ok_or(Error::NullPointer)?;
+
+    Ok(Some(StorePath {
+      inner,
+      _context: Arc::clone(&self._context),
+    }))
   }
 }
 
