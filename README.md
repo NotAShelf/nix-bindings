@@ -2,7 +2,7 @@
 
 # nix-bindings
 
-[![Rust Version](https://img.shields.io/badge/rust-1.85.0+-orange.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.90.0+-orange.svg)](https://www.rust-lang.org)
 
 [C API]: https://nix.dev/manual/nix/2.32/c-api
 [Nix]: https://nixos.org
