@@ -64,9 +64,17 @@ impl Value<'_> {
 
   /// Get an element from this list by index.
   ///
+  /// Forces evaluation of the element before returning it. Use
+  /// [`list_get_lazy`](Self::list_get_lazy) to retrieve an element without
+  /// forcing.
+  ///
   /// # Arguments
   ///
   /// * `idx` - The index of the element to retrieve (0-based)
+  ///
+  /// # Returns
+  ///
+  /// The evaluated list element at `idx`.
   ///
   /// # Errors
   ///
@@ -89,6 +97,33 @@ impl Value<'_> {
   /// # }
   /// ```
   pub fn list_get(&self, idx: usize) -> Result<Value<'_>> {
+    self.list_get_impl(idx, false)
+  }
+
+  /// Get an element from this list by index without forcing evaluation.
+  ///
+  /// Returns the raw thunk stored at `idx` without evaluating it. The list
+  /// itself must already be fully evaluated; only the *element* is returned
+  /// unevaluated. This is useful for introspecting or serialising lazy
+  /// lists without triggering side-effecting evaluation.
+  ///
+  /// # Arguments
+  ///
+  /// * `idx` - The index of the element to retrieve (0-based)
+  ///
+  /// # Returns
+  ///
+  /// The list element at `idx`, which may be an unevaluated thunk.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if this value is not a list or the index is out of
+  /// bounds.
+  pub fn list_get_lazy(&self, idx: usize) -> Result<Value<'_>> {
+    self.list_get_impl(idx, true)
+  }
+
+  fn list_get_impl(&self, idx: usize, lazy: bool) -> Result<Value<'_>> {
     if !self.is_list() {
       return Err(Error::InvalidType {
         expected: "list",
@@ -104,16 +139,29 @@ impl Value<'_> {
       });
     }
 
+    let c_idx = idx as std::os::raw::c_uint;
+
     // SAFETY: context, value, and state are valid; index is bounds-checked.
-    // nix_get_list_byidx returns a GC-owned pointer (refcount incremented for
-    // us). Value's Drop calls nix_value_decref to release our reference.
-    let elem_ptr = unsafe {
-      sys::nix_get_list_byidx(
-        self.state.context.as_ptr(),
-        self.inner.as_ptr(),
-        self.state.as_ptr(),
-        idx as std::os::raw::c_uint,
-      )
+    // Both variants return a GC-owned pointer (refcount incremented).
+    // Value's Drop calls nix_value_decref to release our reference.
+    let elem_ptr = if lazy {
+      unsafe {
+        sys::nix_get_list_byidx_lazy(
+          self.state.context.as_ptr(),
+          self.inner.as_ptr(),
+          self.state.as_ptr(),
+          c_idx,
+        )
+      }
+    } else {
+      unsafe {
+        sys::nix_get_list_byidx(
+          self.state.context.as_ptr(),
+          self.inner.as_ptr(),
+          self.state.as_ptr(),
+          c_idx,
+        )
+      }
     };
 
     let inner = NonNull::new(elem_ptr).ok_or(Error::NullPointer)?;
@@ -270,6 +318,30 @@ mod tests {
         length: 3,
       })
     ));
+  }
+
+  #[test]
+  #[serial]
+  fn test_list_get_lazy() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store =
+      Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
+    let state = EvalStateBuilder::new(&store)
+      .expect("Failed to create builder")
+      .build()
+      .expect("Failed to build state");
+
+    let list = state
+      .eval_from_string("[1 (1 + 1) 3]", "<eval>")
+      .expect("Failed to evaluate list");
+
+    // Lazy get: second element is a thunk; force it.
+    let mut elem = list.list_get_lazy(1).expect("list_get_lazy failed");
+    elem.force().expect("force failed");
+    assert_eq!(elem.as_int().expect("Failed to get int"), 2);
+
+    // Out of bounds must still error.
+    assert!(list.list_get_lazy(10).is_err());
   }
 
   #[test]
