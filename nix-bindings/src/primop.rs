@@ -398,7 +398,16 @@ impl PrimOp {
   {
     let name_c = CString::new(name)?;
     let doc_c = doc.map(CString::new).transpose()?;
-    let doc_ptr = doc_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+    // PrimOp::doc is std::optional<std::string> since Nix 2.34.
+    // Passing null would throw "construction from null".
+    let empty_doc;
+    let doc_ptr = match doc_c {
+      Some(ref c) => c.as_ptr(),
+      None => {
+        empty_doc = CString::default();
+        empty_doc.as_ptr()
+      },
+    };
 
     // Box the closure together with its arity for the trampoline.
     let data = Box::new(ClosureData {
@@ -422,8 +431,11 @@ impl PrimOp {
     };
 
     if primop_ptr.is_null() {
-      // Allocation failed; free the closure ourselves.
       let _ = unsafe { Box::from_raw(data_raw as *mut ClosureData) };
+      // SAFETY: context pointer is valid
+      unsafe {
+        check_err(context.as_ptr(), sys::nix_err_code(context.as_ptr()))?;
+      }
       return Err(Error::NullPointer);
     }
 

@@ -311,12 +311,18 @@ fn primop_function_call() {
       let init_err = nix_init_primop(ctx, primop_value, hello_primop);
       assert_eq!(init_err, nix_err_NIX_OK);
 
-      // Call the PrimOp (no arguments)
+      // Call the PrimOp with no arguments
       let result = nix_alloc_value(ctx, state);
       assert!(!result.is_null());
 
-      let call_err =
-        nix_value_call(ctx, state, primop_value, std::ptr::null_mut(), result);
+      let call_err = nix_value_call_multi(
+        ctx,
+        state,
+        primop_value,
+        0,
+        std::ptr::null_mut(),
+        result,
+      );
       if call_err == nix_err_NIX_OK {
         // Force the result
         let force_err = nix_value_force(ctx, state, result);

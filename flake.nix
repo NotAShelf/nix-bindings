@@ -4,7 +4,7 @@
   # having a reference point, so we know what is ready for public use and what
   # is not. Security and critical performance improvements are always included
   # so it makes a good starting point.
-  inputs.nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-25.11";
+  inputs.nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
 
   outputs = {nixpkgs, ...}: let
     systems = ["x86_64-linux" "aarch64-linux"];
