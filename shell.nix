@@ -3,7 +3,7 @@
   # Generally the policy is to use the version corresponding to `pkgs.nix`'s
   # in nixos-stable. Fortunately the C API does not move fast enough, so
   # there is a degree of forward-compatibility.
-  nixForBindings = pkgs.nixVersions.nix_2_32;
+  nixForBindings = pkgs.nixVersions.nix_2_34;
   inherit (pkgs.rustc) llvmPackages;
 in
   pkgs.mkShell {
