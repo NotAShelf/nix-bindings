@@ -8,14 +8,14 @@ edition      = "2024"
 license      = "MIT"
 readme       = true
 repository   = "https://github.com/notashelf/nix-bindings"
-rust-version = "1.85.0"
-version      = "0.2328.1"
+rust-version = "1.90.0"
+version      = "0.2347.0"
 
 [workspace.dependencies]
-nix-bindings-sys = { path = "./nix-bindings-sys", version = "0.2328.0" }
+nix-bindings-sys = { path = "./nix-bindings-sys", version = "0.2347.0" }
 
 bindgen         = { default-features = false, features = [ "logging", "runtime" ], version = "0.72.1" }
-cc              = "1.2.61"
+cc              = "1.2.62"
 doxygen-bindgen = "0.1.3"
 pkg-config      = "0.3.33"
 serial_test     = "3.4.0"
