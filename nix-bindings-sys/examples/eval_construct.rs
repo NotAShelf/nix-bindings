@@ -133,6 +133,8 @@ fn main() {
     let a_val = nix_alloc_value(ctx, state);
     let b_val = nix_alloc_value(ctx, state);
     nix_init_int(ctx, a_val, 1);
+
+    #[expect(clippy::disallowed_names)]
     let foo = CString::new("foo").unwrap();
     nix_init_string(ctx, b_val, foo.as_ptr());
     let a = CString::new("a").unwrap();
