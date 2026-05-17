@@ -717,6 +717,54 @@ impl Store {
       _context: Arc::clone(&self._context),
     }))
   }
+
+  /// Add text content to the Nix store.
+  ///
+  /// This is the equivalent of `builtins.toFile`: it writes the given text
+  /// to the store as a fixed-output, content-addressed file, and returns
+  /// the resulting [`StorePath`].
+  ///
+  /// The path's hash is computed from the content, so identical content
+  /// always produces the same store path.
+  ///
+  /// # Arguments
+  ///
+  /// * `name` - The filename that will appear in the store path
+  /// * `text` - The content to write to the store
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the store operation fails.
+  #[cfg(feature = "shim")]
+  pub fn add_text_to_store(&self, name: &str, text: &str) -> Result<StorePath> {
+    let name_c = CString::new(name)?;
+    let text_c = CString::new(text)?;
+
+    let mut out_path: *mut sys::StorePath = std::ptr::null_mut();
+
+    // SAFETY: context, store, name, text are valid; out_path is writable
+    let err = unsafe {
+      sys::nix_store_add_text_to_store(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        name_c.as_ptr(),
+        text_c.as_ptr(),
+        text.len() as std::os::raw::c_uint,
+        &mut out_path,
+      )
+    };
+
+    unsafe {
+      check_err(self._context.as_ptr(), err)?;
+    }
+
+    let inner = NonNull::new(out_path).ok_or(Error::NullPointer)?;
+
+    Ok(StorePath {
+      inner,
+      _context: Arc::clone(&self._context),
+    })
+  }
 }
 
 impl Drop for Store {
