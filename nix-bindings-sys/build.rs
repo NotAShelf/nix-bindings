@@ -76,4 +76,51 @@ fn main() {
   bindings
     .write_to_file(out_path.join("bindings.rs"))
     .expect("Couldn't write bindings!");
+
+  // Compile the C++ shim that adds missing store functions
+  if env::var("CARGO_FEATURE_STORE").is_ok() {
+    println!("cargo:rerun-if-changed=src/wrappers/add_to_store.cc");
+    println!("cargo:rerun-if-changed=include/nix_api_store_text.h");
+
+    let nix_store = pkg_config::probe_library("nix-store")
+      .expect("Unable to find .pc file for nix-store");
+    let nix_util = pkg_config::probe_library("nix-util")
+      .expect("Unable to find .pc file for nix-util");
+
+    let mut cc_build = cc::Build::new();
+    cc_build.cpp(true);
+    cc_build.flag("-std=c++23");
+    cc_build.include("include");
+
+    for path in &nix_store.include_paths {
+      cc_build.include(path);
+    }
+    for path in &nix_util.include_paths {
+      cc_build.include(path);
+    }
+
+    if env::var("CARGO_FEATURE_SHIM").is_ok() {
+      println!("cargo:rerun-if-changed=src/wrappers/add_to_store.cc");
+      cc_build.file("src/wrappers/add_to_store.cc");
+      cc_build.env("NIX_CFLAGS_COMPILE", "");
+
+      if let Ok(nix_cflags) = env::var("NIX_CFLAGS_COMPILE") {
+        let parts: Vec<&str> = nix_cflags.split(' ').collect();
+        let mut i = 0;
+        while i < parts.len() {
+          if parts[i] == "-isystem"
+            && i + 1 < parts.len()
+            && !parts[i + 1].is_empty()
+          {
+            cc_build.include(parts[i + 1]);
+            i += 2;
+          } else {
+            i += 1;
+          }
+        }
+      }
+    }
+
+    cc_build.compile("nix_api_store_text");
+  }
 }

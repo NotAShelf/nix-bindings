@@ -14,13 +14,14 @@ targets = [ "x86_64-unknown-linux-gnu" ]
 
 [features]
 default = [ "full" ]
-full    = [ "nix-bindings-sys/full", "store", "expr", "util", "flake", "main", "external", "primop" ]
+full    = [ "nix-bindings-sys/full", "store", "expr", "util", "flake", "main", "external", "primop", "shim" ]
 
 expr     = [ "store", "nix-bindings-sys/expr" ]
 external = [ "store", "nix-bindings-sys/util" ]
 flake    = [ "expr", "nix-bindings-sys/flake" ]
 main     = [ "nix-bindings-sys/main" ]
 primop   = [ "expr", "nix-bindings-sys/expr" ]
+shim     = [ "nix-bindings-sys/shim" ]
 store    = [ "nix-bindings-sys/store", "nix-bindings-sys/expr", "nix-bindings-sys/util" ]
 util     = [ "nix-bindings-sys/util" ]
 

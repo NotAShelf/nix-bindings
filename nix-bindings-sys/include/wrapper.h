@@ -7,8 +7,8 @@
 #endif
 
 #ifdef FEATURE_UTIL
-#include <nix_api_util.h>
 #include <nix_api_external.h>
+#include <nix_api_util.h>
 #endif
 
 #ifdef FEATURE_EXPR
