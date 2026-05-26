@@ -43,7 +43,7 @@ jobs:
           path: nix-bindings-sys/lcov.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v6.0.1
         with:
           files: nix-bindings-sys/lcov.info
           flags: sys
