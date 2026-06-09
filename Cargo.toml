@@ -18,7 +18,7 @@ bindgen         = { default-features = false, features = [ "logging", "runtime" 
 cc              = "1.2.63"
 doxygen-bindgen = "0.1.3"
 pkg-config      = "0.3.33"
-serial_test     = "3.4.0"
+serial_test     = "3.5.0"
 tempfile        = "3.27.0"
 
 # Building bindgen with optimizations makes the build script run faster, more
