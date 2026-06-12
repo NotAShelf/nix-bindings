@@ -718,38 +718,41 @@ impl Store {
     }))
   }
 
-  /// Add text content to the Nix store.
+  /// Add arbitrary bytes to the Nix store as a flat, content-addressed file.
   ///
-  /// This is the equivalent of `builtins.toFile`: it writes the given text
-  /// to the store as a fixed-output, content-addressed file, and returns
-  /// the resulting [`StorePath`].
-  ///
-  /// The path's hash is computed from the content, so identical content
-  /// always produces the same store path.
+  /// Equivalent to `builtins.toFile`, but accepts any byte sequence
+  /// (including embedded NULs and non-UTF-8 data). The path's hash is
+  /// derived from the content, so identical bytes always produce the
+  /// same store path. The resulting path has no references.
   ///
   /// # Arguments
   ///
   /// * `name` - The filename that will appear in the store path
-  /// * `text` - The content to write to the store
+  /// * `data` - The bytes to write
   ///
   /// # Errors
   ///
   /// Returns an error if the store operation fails.
   #[cfg(feature = "shim")]
-  pub fn add_text_to_store(&self, name: &str, text: &str) -> Result<StorePath> {
+  pub fn add_bytes_to_store(
+    &self,
+    name: &str,
+    data: &[u8],
+  ) -> Result<StorePath> {
     let name_c = CString::new(name)?;
-    let text_c = CString::new(text)?;
 
     let mut out_path: *mut sys::StorePath = std::ptr::null_mut();
 
-    // SAFETY: context, store, name, text are valid; out_path is writable
+    // SAFETY: context, store, and name are valid; `data` points to `data.len()`
+    // readable bytes (or is dangling for an empty slice, which the shim
+    // tolerates when len == 0). `out_path` is a writable out-pointer.
     let err = unsafe {
-      sys::nix_store_add_text_to_store(
+      sys::nix_store_add_bytes_to_store(
         self._context.as_ptr(),
         self.inner.as_ptr(),
         name_c.as_ptr(),
-        text_c.as_ptr(),
-        text.len() as std::os::raw::c_uint,
+        data.as_ptr(),
+        data.len(),
         &mut out_path,
       )
     };
@@ -764,6 +767,20 @@ impl Store {
       inner,
       _context: Arc::clone(&self._context),
     })
+  }
+
+  /// Add text content to the Nix store.
+  ///
+  /// Thin convenience wrapper over
+  /// [`add_bytes_to_store`](Self::add_bytes_to_store) that writes the UTF-8
+  /// bytes of `text`.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the store operation fails.
+  #[cfg(feature = "shim")]
+  pub fn add_text_to_store(&self, name: &str, text: &str) -> Result<StorePath> {
+    self.add_bytes_to_store(name, text.as_bytes())
   }
 }
 
@@ -862,6 +879,45 @@ mod tests {
     let store = Store::open(&ctx, None).expect("Failed to open store");
     let ver = store.version().expect("Failed to get store version");
     assert!(!ver.is_empty(), "Store version should not be empty");
+  }
+
+  #[cfg(feature = "shim")]
+  #[test]
+  #[serial]
+  fn test_add_bytes_to_store_roundtrip() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store = Store::open(&ctx, None).expect("Failed to open store");
+
+    // Embedded NUL + non-UTF-8 byte; CString::new would have rejected this.
+    let data: &[u8] = b"hello\0world\xff";
+    let path = store
+      .add_bytes_to_store("nix-bindings-bytes-test.bin", data)
+      .expect("add_bytes_to_store failed");
+
+    assert_eq!(path.name().expect("name"), "nix-bindings-bytes-test.bin");
+    assert!(store.is_valid_path(&path));
+
+    // Determinism: identical bytes → identical path.
+    let path2 = store
+      .add_bytes_to_store("nix-bindings-bytes-test.bin", data)
+      .expect("second add failed");
+    assert_eq!(
+      path.hash_part().expect("hash"),
+      path2.hash_part().expect("hash"),
+    );
+  }
+
+  #[cfg(feature = "shim")]
+  #[test]
+  #[serial]
+  fn test_add_text_to_store_delegates() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store = Store::open(&ctx, None).expect("Failed to open store");
+
+    let p = store
+      .add_text_to_store("nix-bindings-text-test.txt", "hello, world\n")
+      .expect("add_text_to_store failed");
+    assert!(store.is_valid_path(&p));
   }
 
   #[test]
