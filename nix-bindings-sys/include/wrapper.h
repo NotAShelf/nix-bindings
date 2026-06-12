@@ -23,3 +23,7 @@
 #ifdef FEATURE_MAIN
 #include <nix_api_main.h>
 #endif
+
+#ifdef FEATURE_SHIM
+#include "nix_api_store_text.h"
+#endif

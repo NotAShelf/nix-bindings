@@ -21,8 +21,9 @@ impl ParseCallbacks for ProcessComments {
 }
 
 fn main() {
-  // Tell cargo to invalidate the built crate whenever the wrapper changes
   println!("cargo:rerun-if-changed=include/wrapper.h");
+  println!("cargo:rerun-if-changed=include/nix_api_store_text.h");
+  println!("cargo:rerun-if-changed=src/wrappers/add_to_store.cc");
 
   // Dynamically get GCC's include path for standard headers (e.g., stdbool.h)
   let gcc_include = Command::new("gcc")
@@ -32,29 +33,34 @@ fn main() {
     .stdout;
   let gcc_include = String::from_utf8_lossy(&gcc_include).trim().to_string();
 
-  // The bindgen::Builder is the main entry point to bindgen
   let mut builder = bindgen::Builder::default()
     .header("include/wrapper.h")
     .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
     .formatter(bindgen::Formatter::Rustfmt)
     .rustfmt_configuration_file(std::fs::canonicalize(".rustfmt.toml").ok())
     .parse_callbacks(Box::new(ProcessComments))
-    .clang_arg(format!("-I{gcc_include}"));
+    .clang_arg(format!("-I{gcc_include}"))
+    .clang_arg("-Iinclude");
 
-  // For each enabled feature, probe the matching C library and add the
-  // corresponding preprocessor define so wrapper.h includes the right headers.
+  // (Cargo feature env var, preprocessor define, optional pkg-config lib name)
   //
-  // (Cargo feature env var, preprocessor define, pkg-config lib name)
-  let libraries: &[(&str, &str, &str)] = &[
-    ("CARGO_FEATURE_STORE", "FEATURE_STORE", "nix-store-c"),
-    ("CARGO_FEATURE_EXPR", "FEATURE_EXPR", "nix-expr-c"),
-    ("CARGO_FEATURE_UTIL", "FEATURE_UTIL", "nix-util-c"),
-    ("CARGO_FEATURE_FLAKE", "FEATURE_FLAKE", "nix-flake-c"),
-    ("CARGO_FEATURE_MAIN", "FEATURE_MAIN", "nix-main-c"),
+  // `shim` has no pkg-config library; it only flips a `-D` so wrapper.h
+  // pulls in the shim header for bindgen.
+  let libraries: &[(&str, &str, Option<&str>)] = &[
+    ("CARGO_FEATURE_STORE", "FEATURE_STORE", Some("nix-store-c")),
+    ("CARGO_FEATURE_EXPR", "FEATURE_EXPR", Some("nix-expr-c")),
+    ("CARGO_FEATURE_UTIL", "FEATURE_UTIL", Some("nix-util-c")),
+    ("CARGO_FEATURE_FLAKE", "FEATURE_FLAKE", Some("nix-flake-c")),
+    ("CARGO_FEATURE_MAIN", "FEATURE_MAIN", Some("nix-main-c")),
+    ("CARGO_FEATURE_SHIM", "FEATURE_SHIM", None),
   ];
 
   for (feat_var, define, lib_name) in libraries {
-    if env::var(feat_var).is_ok() {
+    if env::var(feat_var).is_err() {
+      continue;
+    }
+
+    if let Some(lib_name) = lib_name {
       let lib = pkg_config::probe_library(lib_name)
         .unwrap_or_else(|_| panic!("Unable to find .pc file for {lib_name}"));
 
@@ -65,62 +71,61 @@ fn main() {
       for link_file in lib.link_files {
         println!("cargo:rustc-link-lib={}", link_file.display());
       }
-
-      builder = builder.clang_arg(format!("-D{define}"));
     }
+
+    builder = builder.clang_arg(format!("-D{define}"));
   }
 
-  // Write the bindings to the $OUT_DIR/bindings.rs file
   let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
   let bindings = builder.generate().expect("Unable to generate bindings");
   bindings
     .write_to_file(out_path.join("bindings.rs"))
     .expect("Couldn't write bindings!");
 
-  // Compile the C++ shim that adds missing store functions
-  if env::var("CARGO_FEATURE_STORE").is_ok() {
-    println!("cargo:rerun-if-changed=src/wrappers/add_to_store.cc");
-    println!("cargo:rerun-if-changed=include/nix_api_store_text.h");
-
-    let nix_store = pkg_config::probe_library("nix-store")
-      .expect("Unable to find .pc file for nix-store");
-    let nix_util = pkg_config::probe_library("nix-util")
-      .expect("Unable to find .pc file for nix-util");
+  // Compile the C++ shim. It needs:
+  //   - The C++ headers from nix-{store,util} (store-api.hh, etc.).
+  //   - The *internal* public C headers from nix-{store,util}-c which give us
+  //     the authoritative layouts of nix_c_context, Store, and StorePath
+  //     (avoiding the previous hand-copied struct definitions).
+  //   - Toolchain system headers (glibc, libstdc++) which on Nix come via
+  //     NIX_CFLAGS_COMPILE rather than pkg-config.
+  if env::var("CARGO_FEATURE_SHIM").is_ok() {
+    assert!(
+      env::var("CARGO_FEATURE_STORE").is_ok(),
+      "the `shim` feature requires the `store` feature"
+    );
 
     let mut cc_build = cc::Build::new();
     cc_build.cpp(true);
     cc_build.flag("-std=c++23");
     cc_build.include("include");
 
-    for path in &nix_store.include_paths {
-      cc_build.include(path);
-    }
-    for path in &nix_util.include_paths {
-      cc_build.include(path);
-    }
-
-    if env::var("CARGO_FEATURE_SHIM").is_ok() {
-      println!("cargo:rerun-if-changed=src/wrappers/add_to_store.cc");
-      cc_build.file("src/wrappers/add_to_store.cc");
-      cc_build.env("NIX_CFLAGS_COMPILE", "");
-
-      if let Ok(nix_cflags) = env::var("NIX_CFLAGS_COMPILE") {
-        let parts: Vec<&str> = nix_cflags.split(' ').collect();
-        let mut i = 0;
-        while i < parts.len() {
-          if parts[i] == "-isystem"
-            && i + 1 < parts.len()
-            && !parts[i + 1].is_empty()
-          {
-            cc_build.include(parts[i + 1]);
-            i += 2;
-          } else {
-            i += 1;
-          }
-        }
+    for pc in ["nix-store", "nix-util", "nix-store-c", "nix-util-c"] {
+      let lib = pkg_config::probe_library(pc)
+        .unwrap_or_else(|_| panic!("Unable to find .pc file for {pc}"));
+      for path in &lib.include_paths {
+        cc_build.include(path);
       }
     }
 
+    // Pull `-isystem` paths from NIX_CFLAGS_COMPILE (toolchain include dirs
+    // in a Nix dev shell) and surface them as `-I` to cc-rs. Then blank the
+    // var for the child so the cc wrapper doesn't apply them a second time.
+    if let Ok(nix_cflags) = env::var("NIX_CFLAGS_COMPILE") {
+      let parts: Vec<&str> = nix_cflags.split_whitespace().collect();
+      let mut i = 0;
+      while i < parts.len() {
+        if parts[i] == "-isystem" && i + 1 < parts.len() {
+          cc_build.include(parts[i + 1]);
+          i += 2;
+        } else {
+          i += 1;
+        }
+      }
+    }
+    cc_build.env("NIX_CFLAGS_COMPILE", "");
+
+    cc_build.file("src/wrappers/add_to_store.cc");
     cc_build.compile("nix_api_store_text");
   }
 }
