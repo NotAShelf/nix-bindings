@@ -207,10 +207,30 @@ impl Drop for FlakeReferenceParseFlags {
 unsafe impl Send for FlakeReferenceParseFlags {}
 unsafe impl Sync for FlakeReferenceParseFlags {}
 
+/// Lock-file update strategy for [`LockFlags::set_mode`].
+///
+/// The three modes are mutually exclusive at the C-API level. Picking one
+/// writes into the underlying `nix_flake_lock_flags` slot, so chaining
+/// modes is meaningless. Exposing them as an enum makes that obvious at
+/// the call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockMode {
+  /// Require the lock file to be up-to-date; fail if it needs updating.
+  Check,
+  /// Update the lock file in memory only; do not write it to disk.
+  Virtual,
+  /// Update and write the lock file to disk if it needs updating.
+  WriteAsNeeded,
+}
+
 /// Flags controlling the lock-file update strategy for [`LockedFlake::lock`].
+///
+/// Holds an Arc to the originating [`FlakeSettings`] so the settings cannot
+/// be dropped while these flags are alive.
 pub struct LockFlags {
-  inner:    NonNull<sys::nix_flake_lock_flags>,
-  _context: Arc<Context>,
+  inner:     NonNull<sys::nix_flake_lock_flags>,
+  _context:  Arc<Context>,
+  _settings: Arc<FlakeSettings>,
 }
 
 impl LockFlags {
@@ -221,7 +241,7 @@ impl LockFlags {
   /// Returns an error if the underlying allocation fails.
   pub fn new(
     context: &Arc<Context>,
-    flake_settings: &FlakeSettings,
+    flake_settings: &Arc<FlakeSettings>,
   ) -> Result<Self> {
     // SAFETY: context and flake_settings are valid
     let ptr = unsafe {
@@ -231,62 +251,35 @@ impl LockFlags {
     Ok(LockFlags {
       inner,
       _context: Arc::clone(context),
+      _settings: Arc::clone(flake_settings),
     })
   }
 
-  /// Require the lock file to be up-to-date; fail if it needs updating.
+  /// Set the lock-file update strategy.
   ///
   /// # Errors
   ///
   /// Returns an error if the C API call fails.
-  pub fn set_mode_check(self) -> Result<Self> {
+  pub fn set_mode(self, mode: LockMode) -> Result<Self> {
     // SAFETY: context and flags are valid
     unsafe {
-      check_err(
-        self._context.as_ptr(),
-        sys::nix_flake_lock_flags_set_mode_check(
+      let err = match mode {
+        LockMode::Check => sys::nix_flake_lock_flags_set_mode_check(
           self._context.as_ptr(),
           self.inner.as_ptr(),
         ),
-      )?;
-    }
-    Ok(self)
-  }
-
-  /// Update the lock file in memory only; do not write it to disk.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if the C API call fails.
-  pub fn set_mode_virtual(self) -> Result<Self> {
-    // SAFETY: context and flags are valid
-    unsafe {
-      check_err(
-        self._context.as_ptr(),
-        sys::nix_flake_lock_flags_set_mode_virtual(
+        LockMode::Virtual => sys::nix_flake_lock_flags_set_mode_virtual(
           self._context.as_ptr(),
           self.inner.as_ptr(),
         ),
-      )?;
-    }
-    Ok(self)
-  }
-
-  /// Update and write the lock file to disk if it needs updating.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if the C API call fails.
-  pub fn set_mode_write_as_needed(self) -> Result<Self> {
-    // SAFETY: context and flags are valid
-    unsafe {
-      check_err(
-        self._context.as_ptr(),
-        sys::nix_flake_lock_flags_set_mode_write_as_needed(
-          self._context.as_ptr(),
-          self.inner.as_ptr(),
-        ),
-      )?;
+        LockMode::WriteAsNeeded => {
+          sys::nix_flake_lock_flags_set_mode_write_as_needed(
+            self._context.as_ptr(),
+            self.inner.as_ptr(),
+          )
+        },
+      };
+      check_err(self._context.as_ptr(), err)?;
     }
     Ok(self)
   }
@@ -564,8 +557,9 @@ mod tests {
   #[serial]
   fn test_flake_reference_parse_flags_new() {
     let ctx = Arc::new(Context::new().expect("Failed to create context"));
-    let settings =
-      FlakeSettings::new(&ctx).expect("Failed to create flake settings");
+    let settings = Arc::new(
+      FlakeSettings::new(&ctx).expect("Failed to create flake settings"),
+    );
     let _f = FlakeReferenceParseFlags::new(&ctx, &settings)
       .expect("Failed to create parse flags");
   }
@@ -574,8 +568,9 @@ mod tests {
   #[serial]
   fn test_flake_reference_parse_flags_set_base_directory() {
     let ctx = Arc::new(Context::new().expect("Failed to create context"));
-    let settings =
-      FlakeSettings::new(&ctx).expect("Failed to create flake settings");
+    let settings = Arc::new(
+      FlakeSettings::new(&ctx).expect("Failed to create flake settings"),
+    );
     let _f = FlakeReferenceParseFlags::new(&ctx, &settings)
       .expect("Failed to create parse flags")
       .set_base_directory("/tmp")
@@ -586,8 +581,9 @@ mod tests {
   #[serial]
   fn test_lock_flags_new() {
     let ctx = Arc::new(Context::new().expect("Failed to create context"));
-    let settings =
-      FlakeSettings::new(&ctx).expect("Failed to create flake settings");
+    let settings = Arc::new(
+      FlakeSettings::new(&ctx).expect("Failed to create flake settings"),
+    );
     let _f =
       LockFlags::new(&ctx, &settings).expect("Failed to create lock flags");
   }
@@ -596,19 +592,20 @@ mod tests {
   #[serial]
   fn test_lock_flags_set_modes() {
     let ctx = Arc::new(Context::new().expect("Failed to create context"));
-    let settings =
-      FlakeSettings::new(&ctx).expect("Failed to create flake settings");
+    let settings = Arc::new(
+      FlakeSettings::new(&ctx).expect("Failed to create flake settings"),
+    );
     let _check = LockFlags::new(&ctx, &settings)
       .expect("create")
-      .set_mode_check()
-      .expect("set_mode_check");
+      .set_mode(LockMode::Check)
+      .expect("set Check");
     let _virtual = LockFlags::new(&ctx, &settings)
       .expect("create")
-      .set_mode_virtual()
-      .expect("set_mode_virtual");
+      .set_mode(LockMode::Virtual)
+      .expect("set Virtual");
     let _write = LockFlags::new(&ctx, &settings)
       .expect("create")
-      .set_mode_write_as_needed()
-      .expect("set_mode_write_as_needed");
+      .set_mode(LockMode::WriteAsNeeded)
+      .expect("set WriteAsNeeded");
   }
 }

@@ -525,7 +525,6 @@ impl PrimOpRet<'_> {
     }
   }
 
-
   /// Copy the value pointed to by `src` into the return slot.
   ///
   /// This is useful when the result is an existing [`Value`](crate::Value)
@@ -1105,12 +1104,11 @@ impl ArgAttrs<'_> {
       if name_ptr.is_null() {
         continue;
       }
-      let name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }
-        .to_str()
-        .map_err(|_| {
-          Error::Unknown("Attribute name was not valid UTF-8".to_string())
-        })?
-        .to_owned();
+      let name = unsafe {
+        std::ffi::CStr::from_ptr(name_ptr)
+          .to_string_lossy()
+          .into_owned()
+      };
       keys.push(name);
     }
     Ok(keys)
@@ -1228,19 +1226,9 @@ impl PrimOp {
   ///
   /// * `context`: the Nix context.
   /// * `name`: the name of the primop as it will appear in Nix.
-  /// * `arity`: number of arguments the primop accepts.  See note below
-  ///   about `arity == 0`.
+  /// * `arity`: number of arguments the primop accepts.
   /// * `doc`: optional documentation string.
   /// * `f`: the Rust closure to invoke.
-  ///
-  /// # Arity restrictions
-  ///
-  /// Nix does not allow nullary primops to be called as functions.  An
-  /// `arity == 0` primop can only ever be evaluated as a thunk reached
-  /// through the global builtins table (so it must be registered via
-  /// [`register`](Self::register); [`into_value`](Self::into_value) returns
-  /// a value that is not callable as a function).  For most cases pass
-  /// `arity >= 1` even if the closure ignores its arguments.
   ///
   /// # Errors
   ///
