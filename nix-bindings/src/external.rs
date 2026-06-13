@@ -174,7 +174,9 @@ impl ErasedPayload {
   ///
   /// Returns `None` if the pointer is null or the sentinel does not match,
   /// meaning the payload was not produced by this crate.
-  unsafe fn try_from_void<'a>(ptr: *mut std::os::raw::c_void) -> Option<&'a Self> {
+  unsafe fn try_from_void<'a>(
+    ptr: *mut std::os::raw::c_void,
+  ) -> Option<&'a Self> {
     if ptr.is_null() {
       return None;
     }
@@ -189,7 +191,8 @@ impl ErasedPayload {
   /// is wrong. Use only inside callbacks that own the payload (`print`,
   /// `show_type`, `coerce_to_string`) where `self_` was produced by us.
   unsafe fn from_void<'a>(ptr: *mut std::os::raw::c_void) -> &'a Self {
-    unsafe { Self::try_from_void(ptr) }.expect("ErasedPayload sentinel mismatch")
+    unsafe { Self::try_from_void(ptr) }
+      .expect("ErasedPayload sentinel mismatch")
   }
 }
 
@@ -280,7 +283,11 @@ static VTABLE: sys::NixCExternalValueDesc = {
       if a.type_id != b.type_id {
         return 0;
       }
-      if unsafe { (a.equal_fn)(a.data, b.data) } { 1 } else { 0 }
+      if unsafe { (a.equal_fn)(a.data, b.data) } {
+        1
+      } else {
+        0
+      }
     }));
     result.unwrap_or(0)
   }

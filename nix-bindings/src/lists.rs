@@ -180,10 +180,12 @@ impl<'a> Iterator for ListIterator<'a> {
     };
 
     match NonNull::new(elem_ptr) {
-      Some(inner) => Some(Ok(Value {
-        inner,
-        state: self.value.state,
-      })),
+      Some(inner) => {
+        Some(Ok(Value {
+          inner,
+          state: self.value.state,
+        }))
+      },
       None => Some(Err(Error::NullPointer)),
     }
   }

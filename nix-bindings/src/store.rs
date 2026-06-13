@@ -35,13 +35,20 @@ impl Default for CopyPathOptions {
 /// `Error::NullPointer` and loses the diagnostic.
 unsafe fn null_or_context_err(ctx: &Context, fallback: Error) -> Error {
   unsafe {
-    let ptr =
-      sys::nix_err_msg(std::ptr::null_mut(), ctx.as_ptr(), std::ptr::null_mut());
+    let ptr = sys::nix_err_msg(
+      std::ptr::null_mut(),
+      ctx.as_ptr(),
+      std::ptr::null_mut(),
+    );
     if ptr.is_null() {
       return fallback;
     }
     let msg = CStr::from_ptr(ptr).to_string_lossy().into_owned();
-    if msg.is_empty() { fallback } else { Error::Unknown(msg) }
+    if msg.is_empty() {
+      fallback
+    } else {
+      Error::Unknown(msg)
+    }
   }
 }
 
@@ -101,7 +108,9 @@ impl StorePath {
 
     let inner = match NonNull::new(path_ptr) {
       Some(p) => p,
-      None => return Err(unsafe { null_or_context_err(context, Error::NullPointer) }),
+      None => {
+        return Err(unsafe { null_or_context_err(context, Error::NullPointer) });
+      },
     };
 
     Ok(StorePath {
@@ -447,9 +456,7 @@ impl Store {
     // We must keep the backing CStrings alive across the call.
     let key_vals: Vec<(CString, CString)> = params
       .iter()
-      .map(|(k, v)| {
-        Ok((CString::new(k.as_ref())?, CString::new(v.as_ref())?))
-      })
+      .map(|(k, v)| Ok((CString::new(k.as_ref())?, CString::new(v.as_ref())?)))
       .collect::<Result<_>>()?;
 
     let mut inner_arrays: Vec<[*const std::os::raw::c_char; 3]> = key_vals
@@ -473,9 +480,8 @@ impl Store {
     // is null (no params) or a properly null-terminated array of
     // null-terminated key/value pairs kept alive by `key_vals` and
     // `inner_arrays` until the call returns.
-    let store_ptr = unsafe {
-      sys::nix_store_open(context.as_ptr(), uri_ptr, params_ptr)
-    };
+    let store_ptr =
+      unsafe { sys::nix_store_open(context.as_ptr(), uri_ptr, params_ptr) };
 
     drop(outer);
     drop(inner_arrays);
@@ -483,7 +489,9 @@ impl Store {
 
     let inner = match NonNull::new(store_ptr) {
       Some(p) => p,
-      None => return Err(unsafe { null_or_context_err(context, Error::NullPointer) }),
+      None => {
+        return Err(unsafe { null_or_context_err(context, Error::NullPointer) });
+      },
     };
 
     Ok(Store {

@@ -402,7 +402,7 @@ pub struct PrimOpRet<'a> {
   _phantom: PhantomData<&'a mut ()>,
 }
 
-impl PrimOpRet<'_> {
+impl<'a> PrimOpRet<'a> {
   /// Write an integer result.
   ///
   /// # Errors
@@ -556,7 +556,7 @@ impl PrimOpRet<'_> {
   /// # Errors
   ///
   /// Returns an error if construction fails.
-  pub fn set_attrs(&mut self, pairs: &[(&str, &PrimOpValue)]) -> Result<()> {
+  pub fn set_attrs(&mut self, pairs: &[(&str, &PrimOpValue<'_>)]) -> Result<()> {
     let builder = unsafe {
       sys::nix_make_bindings_builder(self.ctx, self.state, pairs.len().max(1))
     };
@@ -603,7 +603,7 @@ impl PrimOpRet<'_> {
   /// # Errors
   ///
   /// Returns an error if construction fails.
-  pub fn set_list(&mut self, items: &[&PrimOpValue]) -> Result<()> {
+  pub fn set_list(&mut self, items: &[&PrimOpValue<'_>]) -> Result<()> {
     let builder = unsafe {
       sys::nix_make_list_builder(self.ctx, self.state, items.len().max(1))
     };
@@ -643,7 +643,7 @@ impl PrimOpRet<'_> {
   /// # Errors
   ///
   /// Returns an error if allocation or initialisation fails.
-  pub fn make_int(&self, i: i64) -> Result<PrimOpValue> {
+  pub fn make_int(&self, i: i64) -> Result<PrimOpValue<'a>> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     unsafe {
       check_err(self.ctx, sys::nix_init_int(self.ctx, v.inner, i))?;
@@ -656,7 +656,7 @@ impl PrimOpRet<'_> {
   /// # Errors
   ///
   /// Returns an error if allocation or initialisation fails.
-  pub fn make_float(&self, f: f64) -> Result<PrimOpValue> {
+  pub fn make_float(&self, f: f64) -> Result<PrimOpValue<'a>> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     unsafe {
       check_err(self.ctx, sys::nix_init_float(self.ctx, v.inner, f))?;
@@ -669,7 +669,7 @@ impl PrimOpRet<'_> {
   /// # Errors
   ///
   /// Returns an error if allocation or initialisation fails.
-  pub fn make_bool(&self, b: bool) -> Result<PrimOpValue> {
+  pub fn make_bool(&self, b: bool) -> Result<PrimOpValue<'a>> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     unsafe {
       check_err(self.ctx, sys::nix_init_bool(self.ctx, v.inner, b))?;
@@ -682,7 +682,7 @@ impl PrimOpRet<'_> {
   /// # Errors
   ///
   /// Returns an error if allocation or initialisation fails.
-  pub fn make_null(&self) -> Result<PrimOpValue> {
+  pub fn make_null(&self) -> Result<PrimOpValue<'a>> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     unsafe {
       check_err(self.ctx, sys::nix_init_null(self.ctx, v.inner))?;
@@ -696,7 +696,7 @@ impl PrimOpRet<'_> {
   ///
   /// Returns an error if allocation, string conversion, or initialisation
   /// fails.
-  pub fn make_string(&self, s: &str) -> Result<PrimOpValue> {
+  pub fn make_string(&self, s: &str) -> Result<PrimOpValue<'a>> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     let s_c = CString::new(s)?;
     unsafe {
@@ -723,7 +723,7 @@ impl PrimOpRet<'_> {
   ///
   /// Returns an error if allocation, string conversion, or initialisation
   /// fails, or Nix is running in pure evaluation mode and `p` is absolute.
-  pub fn make_path(&self, p: &str) -> Result<PrimOpValue> {
+  pub fn make_path(&self, p: &str) -> Result<PrimOpValue<'a>> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     let p_c = CString::new(p)?;
     unsafe {
@@ -751,7 +751,7 @@ impl PrimOpRet<'_> {
   /// Returns an error if allocation, string conversion, `p` is not a valid
   /// store path, or initialisation fails.
   #[cfg(feature = "shim")]
-  pub fn make_store_path(&self, p: &str) -> Result<PrimOpValue> {
+  pub fn make_store_path(&self, p: &str) -> Result<PrimOpValue<'a>> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     let p_c = CString::new(p)?;
     unsafe {
@@ -777,18 +777,19 @@ impl PrimOpRet<'_> {
 /// Methods mirror those of [`PrimOpArg`]: `value_type`, `force`, `as_int`,
 /// `as_float`, `as_bool`, `as_string`, `as_attrs`, and `as_list` are all
 /// available.
-pub struct PrimOpValue {
-  inner: *mut sys::nix_value,
-  ctx:   *mut sys::nix_c_context,
-  state: *mut sys::EvalState,
+pub struct PrimOpValue<'a> {
+  inner:    *mut sys::nix_value,
+  ctx:      *mut sys::nix_c_context,
+  state:    *mut sys::EvalState,
+  _phantom: PhantomData<&'a ()>,
 }
 
-// PrimOpValue holds raw pointers borrowed from the callback frame. Sending
-// it across threads would let it outlive the EvalState it points into, so we
-// deliberately do NOT add Send/Sync impls. The raw pointers already prevent
-// the auto-trait, this comment just documents the intent.
+// PrimOpValue holds raw pointers borrowed from the callback frame, expressed
+// by the 'a lifetime. The PhantomData<&'a ()> makes it !Send + !Sync
+// automatically, which is what we want: moving one across threads would let
+// it outlive the EvalState it points into.
 
-impl PrimOpValue {
+impl<'a> PrimOpValue<'a> {
   fn alloc(
     ctx: *mut sys::nix_c_context,
     state: *mut sys::EvalState,
@@ -797,7 +798,12 @@ impl PrimOpValue {
     if inner.is_null() {
       return Err(Error::NullPointer);
     }
-    Ok(PrimOpValue { inner, ctx, state })
+    Ok(PrimOpValue {
+      inner,
+      ctx,
+      state,
+      _phantom: PhantomData,
+    })
   }
 
   /// Return the [`ValueType`] of this value.
@@ -1012,7 +1018,7 @@ impl PrimOpValue {
   }
 }
 
-impl Drop for PrimOpValue {
+impl Drop for PrimOpValue<'_> {
   fn drop(&mut self) {
     // SAFETY: ctx and inner are valid; we own a GC reference
     unsafe {
@@ -1035,17 +1041,18 @@ pub struct ArgAttrs<'a> {
 // ArgAttrs borrows from a callback-frame value; see PrimOpArg above for
 // why we deliberately omit Send/Sync impls.
 
-impl ArgAttrs<'_> {
+impl<'a> ArgAttrs<'a> {
   /// Get an attribute by name.
   ///
   /// Returns an owned [`PrimOpValue`] that holds a GC reference to the
   /// attribute's value. The caller is responsible for the GC reference;
-  /// [`PrimOpValue`] releases it on drop.
+  /// [`PrimOpValue`] releases it on drop. The value carries the same
+  /// callback-frame lifetime as this attribute-set wrapper.
   ///
   /// # Errors
   ///
   /// Returns [`Error::KeyNotFound`] if the key does not exist.
-  pub fn get(&self, key: &str) -> Result<PrimOpValue> {
+  pub fn get(&self, key: &str) -> Result<PrimOpValue<'a>> {
     let key_c = CString::new(key)?;
     // SAFETY: ctx, value, and state are valid
     let ptr = unsafe {
@@ -1055,9 +1062,10 @@ impl ArgAttrs<'_> {
       return Err(Error::KeyNotFound(key.to_string()));
     }
     Ok(PrimOpValue {
-      inner: ptr,
-      ctx:   self.ctx,
-      state: self.state,
+      inner:    ptr,
+      ctx:      self.ctx,
+      state:    self.state,
+      _phantom: PhantomData,
     })
   }
 
@@ -1142,17 +1150,18 @@ pub struct ArgList<'a> {
 // ArgList borrows from a callback-frame value; see PrimOpArg above for
 // why we deliberately omit Send/Sync impls.
 
-impl ArgList<'_> {
+impl<'a> ArgList<'a> {
   /// Get an element by index.
   ///
   /// Returns an owned [`PrimOpValue`] that holds a GC reference to the
   /// element. The caller is responsible for the GC reference;
-  /// [`PrimOpValue`] releases it on drop.
+  /// [`PrimOpValue`] releases it on drop. The value carries the same
+  /// callback-frame lifetime as this list wrapper.
   ///
   /// # Errors
   ///
   /// Returns [`Error::IndexOutOfBounds`] if `index >= self.len()`.
-  pub fn get(&self, index: usize) -> Result<PrimOpValue> {
+  pub fn get(&self, index: usize) -> Result<PrimOpValue<'a>> {
     let length = self.len();
     if index >= length {
       return Err(Error::IndexOutOfBounds { index, length });
@@ -1170,9 +1179,10 @@ impl ArgList<'_> {
       return Err(Error::NullPointer);
     }
     Ok(PrimOpValue {
-      inner: ptr,
-      ctx:   self.ctx,
-      state: self.state,
+      inner:    ptr,
+      ctx:      self.ctx,
+      state:    self.state,
+      _phantom: PhantomData,
     })
   }
 

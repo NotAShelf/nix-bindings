@@ -264,14 +264,18 @@ impl LockFlags {
     // SAFETY: context and flags are valid
     unsafe {
       let err = match mode {
-        LockMode::Check => sys::nix_flake_lock_flags_set_mode_check(
-          self._context.as_ptr(),
-          self.inner.as_ptr(),
-        ),
-        LockMode::Virtual => sys::nix_flake_lock_flags_set_mode_virtual(
-          self._context.as_ptr(),
-          self.inner.as_ptr(),
-        ),
+        LockMode::Check => {
+          sys::nix_flake_lock_flags_set_mode_check(
+            self._context.as_ptr(),
+            self.inner.as_ptr(),
+          )
+        },
+        LockMode::Virtual => {
+          sys::nix_flake_lock_flags_set_mode_virtual(
+            self._context.as_ptr(),
+            self.inner.as_ptr(),
+          )
+        },
         LockMode::WriteAsNeeded => {
           sys::nix_flake_lock_flags_set_mode_write_as_needed(
             self._context.as_ptr(),
