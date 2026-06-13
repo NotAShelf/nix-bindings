@@ -20,7 +20,7 @@
 //! ```no_run
 //! use std::sync::Arc;
 //!
-//! use nix_bindings::{Context, EvalStateBuilder, Store, primop::PrimOp};
+//! use nix_bindings::{Context, EvalStateBuilder, Store, primop::{PrimOp, NixValueOps}};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let ctx = Arc::new(Context::new()?);
@@ -155,56 +155,70 @@ unsafe extern "C" fn drop_closure_finalizer(
   let _ = unsafe { Box::from_raw(cd as *mut ClosureData) };
 }
 
-/// A borrowed Nix value passed as an argument to a primop callback.
+/// Sealing trait that exposes the raw pointer triple of a Nix-value
+/// wrapper. Implemented by [`PrimOpArg`] and [`PrimOpValue`] so the
+/// shared accessor methods on [`NixValueOps`] can run their FFI calls.
 ///
-/// The value is owned by the Nix evaluator and must **not** be decreffed by
-/// the caller. It is valid only for the duration of the primop invocation
-/// (expressed by the `'a` lifetime).
-pub struct PrimOpArg<'a> {
-  inner:    *mut sys::nix_value,
-  ctx:      *mut sys::nix_c_context,
-  state:    *mut sys::EvalState,
-  _phantom: PhantomData<&'a ()>,
+/// This is intentionally not part of the public API surface (the trait
+/// itself is `pub` in a private module): users should call the
+/// [`NixValueOps`] methods, not the raw accessors.
+mod sealed {
+  use super::sys;
+
+  pub trait NixValueRaw {
+    fn raw_ctx(&self) -> *mut sys::nix_c_context;
+    fn raw_state(&self) -> *mut sys::EvalState;
+    fn raw_inner(&self) -> *mut sys::nix_value;
+  }
 }
 
-// PrimOpArg is callback-frame-scoped: its raw context and EvalState pointers
-// only stay valid while the trampoline is on the stack. Marking it Send would
-// let a user move it into a thread that outlives the call, which would be a
-// use-after-free. The PhantomData<&'a ()> already makes it !Send + !Sync
-// implicitly via the raw pointers, so we deliberately do NOT add Send/Sync
-// impls here.
-
-impl PrimOpArg<'_> {
-  /// Return the [`ValueType`] of this argument.
-  #[must_use]
-  pub fn value_type(&self) -> ValueType {
-    let c_type = unsafe { sys::nix_get_type(self.ctx, self.inner) };
+/// Read access to a Nix value inside a primop callback.
+///
+/// Implemented by both [`PrimOpArg`] (borrowed primop argument) and
+/// [`PrimOpValue`] (owned child value extracted from an attribute set
+/// or list). All methods that previously appeared twice on the two
+/// concrete types now live here as default trait methods.
+///
+/// Bring this trait into scope to call `as_int`, `as_string`, etc:
+///
+/// ```ignore
+/// use nix_bindings::primop::NixValueOps;
+/// ```
+pub trait NixValueOps: sealed::NixValueRaw {
+  /// Return the [`ValueType`] of this value.
+  fn value_type(&self) -> ValueType {
+    // SAFETY: ctx and inner are valid for the wrapper's lifetime.
+    let c_type =
+      unsafe { sys::nix_get_type(self.raw_ctx(), self.raw_inner()) };
     ValueType::from_c(c_type)
   }
 
-  /// Force evaluation of this argument (resolves thunks).
+  /// Force evaluation (resolves thunks).
   ///
   /// # Errors
   ///
   /// Returns an error if evaluation fails.
-  pub fn force(&self) -> Result<()> {
+  fn force(&self) -> Result<()> {
+    // SAFETY: ctx, state, and inner are valid for the wrapper's lifetime.
     unsafe {
       check_err(
-        self.ctx,
-        sys::nix_value_force(self.ctx, self.state, self.inner),
+        self.raw_ctx(),
+        sys::nix_value_force(
+          self.raw_ctx(),
+          self.raw_state(),
+          self.raw_inner(),
+        ),
       )
     }
   }
 
-  /// Extract this argument as an integer.
-  ///
-  /// Automatically forces the value if it is a thunk.
+  /// Extract as an integer.  Forces the value first.
   ///
   /// # Errors
   ///
   /// Returns an error if forcing fails or the resolved value is not an
   /// integer.
-  pub fn as_int(&self) -> Result<i64> {
+  fn as_int(&self) -> Result<i64> {
     self.force()?;
     if self.value_type() != ValueType::Int {
       return Err(Error::InvalidType {
@@ -212,18 +226,17 @@ impl PrimOpArg<'_> {
         actual:   self.value_type().to_string(),
       });
     }
-    Ok(unsafe { sys::nix_get_int(self.ctx, self.inner) })
+    // SAFETY: type checked.
+    Ok(unsafe { sys::nix_get_int(self.raw_ctx(), self.raw_inner()) })
   }
 
-  /// Extract this argument as a float.
-  ///
-  /// Automatically forces the value if it is a thunk.
+  /// Extract as a float.  Forces the value first.
   ///
   /// # Errors
   ///
   /// Returns an error if forcing fails or the resolved value is not a
   /// float.
-  pub fn as_float(&self) -> Result<f64> {
+  fn as_float(&self) -> Result<f64> {
     self.force()?;
     if self.value_type() != ValueType::Float {
       return Err(Error::InvalidType {
@@ -231,18 +244,17 @@ impl PrimOpArg<'_> {
         actual:   self.value_type().to_string(),
       });
     }
-    Ok(unsafe { sys::nix_get_float(self.ctx, self.inner) })
+    // SAFETY: type checked.
+    Ok(unsafe { sys::nix_get_float(self.raw_ctx(), self.raw_inner()) })
   }
 
-  /// Extract this argument as a boolean.
-  ///
-  /// Automatically forces the value if it is a thunk.
+  /// Extract as a boolean.  Forces the value first.
   ///
   /// # Errors
   ///
   /// Returns an error if forcing fails or the resolved value is not a
   /// boolean.
-  pub fn as_bool(&self) -> Result<bool> {
+  fn as_bool(&self) -> Result<bool> {
     self.force()?;
     if self.value_type() != ValueType::Bool {
       return Err(Error::InvalidType {
@@ -250,18 +262,18 @@ impl PrimOpArg<'_> {
         actual:   self.value_type().to_string(),
       });
     }
-    Ok(unsafe { sys::nix_get_bool(self.ctx, self.inner) })
+    // SAFETY: type checked.
+    Ok(unsafe { sys::nix_get_bool(self.raw_ctx(), self.raw_inner()) })
   }
 
-  /// Extract this argument as a UTF-8 string.
-  ///
-  /// Automatically forces the value if it is a thunk.
+  /// Extract as a UTF-8 string, realising any string context.  Forces
+  /// the value first.
   ///
   /// # Errors
   ///
   /// Returns an error if forcing fails, the resolved value is not a
   /// string, or the string contains invalid UTF-8.
-  pub fn as_string(&self) -> Result<String> {
+  fn as_string(&self) -> Result<String> {
     self.force()?;
     if self.value_type() != ValueType::String {
       return Err(Error::InvalidType {
@@ -270,8 +282,14 @@ impl PrimOpArg<'_> {
       });
     }
 
+    // SAFETY: type checked.
     let realised_str = unsafe {
-      sys::nix_string_realise(self.ctx, self.state, self.inner, false)
+      sys::nix_string_realise(
+        self.raw_ctx(),
+        self.raw_state(),
+        self.raw_inner(),
+        false,
+      )
     };
 
     if realised_str.is_null() {
@@ -299,19 +317,13 @@ impl PrimOpArg<'_> {
     Ok(s)
   }
 
-  /// Extract this argument as a filesystem path.
-  ///
-  /// Automatically forces the value if it is a thunk.
-  ///
-  /// The returned string is the path as Nix exposes it (e.g. an absolute
-  /// path or a store path). It is copied out of Nix-owned memory, so the
-  /// `String` outlives the underlying value.
+  /// Extract as a filesystem-path string.  Forces the value first.
   ///
   /// # Errors
   ///
-  /// Returns an error if forcing fails, the resolved value is not a path,
-  /// or the path contains invalid UTF-8.
-  pub fn as_path(&self) -> Result<String> {
+  /// Returns an error if forcing fails, the resolved value is not a
+  /// path, or the path contains invalid UTF-8.
+  fn as_path(&self) -> Result<String> {
     self.force()?;
     if self.value_type() != ValueType::Path {
       return Err(Error::InvalidType {
@@ -319,21 +331,59 @@ impl PrimOpArg<'_> {
         actual:   self.value_type().to_string(),
       });
     }
-
-    // SAFETY: ctx and inner are valid; value has been forced and is a Path.
-    let raw = unsafe { sys::nix_get_path_string(self.ctx, self.inner) };
+    // SAFETY: type checked; pointer outlives the copy.
+    let raw =
+      unsafe { sys::nix_get_path_string(self.raw_ctx(), self.raw_inner()) };
     if raw.is_null() {
       return Err(Error::NullPointer);
     }
-
-    // SAFETY: nix_get_path_string returns a NUL-terminated string valid for
-    // the lifetime of `value`; we copy out before returning.
     let cstr = unsafe { CStr::from_ptr(raw) };
     cstr
       .to_str()
       .map(str::to_owned)
       .map_err(|_| Error::Unknown("Invalid UTF-8 in path".into()))
   }
+}
+
+impl<T: sealed::NixValueRaw> NixValueOps for T {}
+
+/// A borrowed Nix value passed as an argument to a primop callback.
+///
+/// The value is owned by the Nix evaluator and must **not** be decreffed by
+/// the caller. It is valid only for the duration of the primop invocation
+/// (expressed by the `'a` lifetime).
+pub struct PrimOpArg<'a> {
+  inner:    *mut sys::nix_value,
+  ctx:      *mut sys::nix_c_context,
+  state:    *mut sys::EvalState,
+  _phantom: PhantomData<&'a ()>,
+}
+
+// PrimOpArg is callback-frame-scoped: its raw context and EvalState pointers
+// only stay valid while the trampoline is on the stack. Marking it Send would
+// let a user move it into a thread that outlives the call, which would be a
+// use-after-free. The PhantomData<&'a ()> already makes it !Send + !Sync
+// implicitly via the raw pointers, so we deliberately do NOT add Send/Sync
+// impls here.
+
+impl sealed::NixValueRaw for PrimOpArg<'_> {
+  fn raw_ctx(&self) -> *mut sys::nix_c_context {
+    self.ctx
+  }
+
+  fn raw_state(&self) -> *mut sys::EvalState {
+    self.state
+  }
+
+  fn raw_inner(&self) -> *mut sys::nix_value {
+    self.inner
+  }
+}
+
+impl PrimOpArg<'_> {
+  // Scalar accessors (value_type, force, as_int, as_float, as_bool,
+  // as_string, as_path) live on the NixValueOps trait; bring it into
+  // scope to use them.
 
   /// Interpret this argument as an attribute set.
   ///
@@ -833,6 +883,20 @@ pub struct PrimOpValue<'a> {
 // automatically, which is what we want: moving one across threads would let
 // it outlive the EvalState it points into.
 
+impl sealed::NixValueRaw for PrimOpValue<'_> {
+  fn raw_ctx(&self) -> *mut sys::nix_c_context {
+    self.ctx
+  }
+
+  fn raw_state(&self) -> *mut sys::EvalState {
+    self.state
+  }
+
+  fn raw_inner(&self) -> *mut sys::nix_value {
+    self.inner
+  }
+}
+
 impl<'a> PrimOpValue<'a> {
   fn alloc(
     ctx: *mut sys::nix_c_context,
@@ -850,162 +914,9 @@ impl<'a> PrimOpValue<'a> {
     })
   }
 
-  /// Return the [`ValueType`] of this value.
-  #[must_use]
-  pub fn value_type(&self) -> ValueType {
-    let c_type = unsafe { sys::nix_get_type(self.ctx, self.inner) };
-    ValueType::from_c(c_type)
-  }
-
-  /// Force evaluation of this value (resolves thunks).
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if evaluation fails.
-  pub fn force(&self) -> Result<()> {
-    unsafe {
-      check_err(
-        self.ctx,
-        sys::nix_value_force(self.ctx, self.state, self.inner),
-      )
-    }
-  }
-
-  /// Extract this value as an integer.
-  ///
-  /// Automatically forces the value if it is a thunk.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails or the resolved value is not an
-  /// integer.
-  pub fn as_int(&self) -> Result<i64> {
-    self.force()?;
-    if self.value_type() != ValueType::Int {
-      return Err(Error::InvalidType {
-        expected: "int",
-        actual:   self.value_type().to_string(),
-      });
-    }
-    Ok(unsafe { sys::nix_get_int(self.ctx, self.inner) })
-  }
-
-  /// Extract this value as a float.
-  ///
-  /// Automatically forces the value if it is a thunk.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails or the resolved value is not a
-  /// float.
-  pub fn as_float(&self) -> Result<f64> {
-    self.force()?;
-    if self.value_type() != ValueType::Float {
-      return Err(Error::InvalidType {
-        expected: "float",
-        actual:   self.value_type().to_string(),
-      });
-    }
-    Ok(unsafe { sys::nix_get_float(self.ctx, self.inner) })
-  }
-
-  /// Extract this value as a boolean.
-  ///
-  /// Automatically forces the value if it is a thunk.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails or the resolved value is not a
-  /// boolean.
-  pub fn as_bool(&self) -> Result<bool> {
-    self.force()?;
-    if self.value_type() != ValueType::Bool {
-      return Err(Error::InvalidType {
-        expected: "bool",
-        actual:   self.value_type().to_string(),
-      });
-    }
-    Ok(unsafe { sys::nix_get_bool(self.ctx, self.inner) })
-  }
-
-  /// Extract this value as a UTF-8 string.
-  ///
-  /// Automatically forces the value if it is a thunk.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails, the resolved value is not a
-  /// string, or the string contains invalid UTF-8.
-  pub fn as_string(&self) -> Result<String> {
-    self.force()?;
-    if self.value_type() != ValueType::String {
-      return Err(Error::InvalidType {
-        expected: "string",
-        actual:   self.value_type().to_string(),
-      });
-    }
-
-    let realised_str = unsafe {
-      sys::nix_string_realise(self.ctx, self.state, self.inner, false)
-    };
-
-    if realised_str.is_null() {
-      return Err(Error::NullPointer);
-    }
-
-    let buffer_start =
-      unsafe { sys::nix_realised_string_get_buffer_start(realised_str) };
-    let buffer_size =
-      unsafe { sys::nix_realised_string_get_buffer_size(realised_str) };
-
-    if buffer_start.is_null() {
-      unsafe { sys::nix_realised_string_free(realised_str) };
-      return Err(Error::NullPointer);
-    }
-
-    let bytes = unsafe {
-      std::slice::from_raw_parts(buffer_start.cast::<u8>(), buffer_size)
-    };
-    let s = std::str::from_utf8(bytes)
-      .map_err(|_| Error::Unknown("Invalid UTF-8 in string".into()))?
-      .to_owned();
-
-    unsafe { sys::nix_realised_string_free(realised_str) };
-    Ok(s)
-  }
-
-  /// Extract this value as a filesystem path.
-  ///
-  /// Automatically forces the value if it is a thunk. The returned `String`
-  /// is copied out of Nix-owned memory and outlives the value.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails, the resolved value is not a path,
-  /// or the path contains invalid UTF-8.
-  pub fn as_path(&self) -> Result<String> {
-    self.force()?;
-    if self.value_type() != ValueType::Path {
-      return Err(Error::InvalidType {
-        expected: "path",
-        actual:   self.value_type().to_string(),
-      });
-    }
-
-    // SAFETY: ctx and inner are valid; value has been forced and is a Path.
-    let raw = unsafe { sys::nix_get_path_string(self.ctx, self.inner) };
-    if raw.is_null() {
-      return Err(Error::NullPointer);
-    }
-
-    // SAFETY: nix_get_path_string returns a NUL-terminated string valid for
-    // the lifetime of `value`; we copy out before returning.
-    let cstr = unsafe { CStr::from_ptr(raw) };
-    cstr
-      .to_str()
-      .map(str::to_owned)
-      .map_err(|_| Error::Unknown("Invalid UTF-8 in path".into()))
-  }
+  // Scalar accessors (value_type, force, as_int, as_float, as_bool,
+  // as_string, as_path) live on the NixValueOps trait; bring it into
+  // scope to use them.
 
   /// Interpret this value as an attribute set.
   ///
