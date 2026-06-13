@@ -370,10 +370,11 @@ pub struct ExternalValueHandle<'s> {
   ext_ptr: *mut sys::ExternalValue,
 }
 
-// SAFETY: ExternalValue* is GC-managed. T: Send + Sync is enforced by
-// NixExternal.
+// SAFETY: ExternalValueHandle wraps a Value<'s> tied to an EvalState. It
+// inherits the same "Send-only, not Sync" stance as Context/EvalState:
+// concurrent access across threads would race the context's error buffer.
+// See Context's note in lib.rs.
 unsafe impl Send for ExternalValueHandle<'_> {}
-unsafe impl Sync for ExternalValueHandle<'_> {}
 
 impl<'s> Deref for ExternalValueHandle<'s> {
   type Target = Value<'s>;

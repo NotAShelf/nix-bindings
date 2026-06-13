@@ -83,9 +83,8 @@ impl Drop for FlakeSettings {
   }
 }
 
-// SAFETY: FlakeSettings can be shared between threads
+// SAFETY: see Context's thread-safety note in lib.rs.
 unsafe impl Send for FlakeSettings {}
-unsafe impl Sync for FlakeSettings {}
 
 /// Fetcher configuration.
 ///
@@ -127,9 +126,8 @@ impl Drop for FetchersSettings {
   }
 }
 
-// SAFETY: FetchersSettings can be shared between threads
+// SAFETY: see Context's thread-safety note in lib.rs.
 unsafe impl Send for FetchersSettings {}
-unsafe impl Sync for FetchersSettings {}
 
 /// Flags that control how a flake reference string is parsed.
 ///
@@ -203,9 +201,8 @@ impl Drop for FlakeReferenceParseFlags {
   }
 }
 
-// SAFETY: FlakeReferenceParseFlags can be shared between threads
+// SAFETY: see Context's thread-safety note in lib.rs.
 unsafe impl Send for FlakeReferenceParseFlags {}
-unsafe impl Sync for FlakeReferenceParseFlags {}
 
 /// Lock-file update strategy for [`LockFlags::set_mode`].
 ///
@@ -330,9 +327,8 @@ impl Drop for LockFlags {
   }
 }
 
-// SAFETY: LockFlags can be shared between threads
+// SAFETY: see Context's thread-safety note in lib.rs.
 unsafe impl Send for LockFlags {}
-unsafe impl Sync for LockFlags {}
 
 /// Callback that collects a string returned from the Nix C API via a pointer
 /// and length pair into an `Option<String>` stored in `user_data`.
@@ -420,9 +416,8 @@ impl Drop for FlakeReference {
   }
 }
 
-// SAFETY: FlakeReference can be shared between threads
+// SAFETY: see Context's thread-safety note in lib.rs.
 unsafe impl Send for FlakeReference {}
-unsafe impl Sync for FlakeReference {}
 
 /// A fully locked flake.
 ///
@@ -508,9 +503,8 @@ impl Drop for LockedFlake {
   }
 }
 
-// SAFETY: LockedFlake can be shared between threads
+// SAFETY: see Context's thread-safety note in lib.rs.
 unsafe impl Send for LockedFlake {}
-unsafe impl Sync for LockedFlake {}
 
 #[cfg(test)]
 mod tests {
