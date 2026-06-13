@@ -34,10 +34,12 @@ impl Value<'_> {
     };
 
     match NonNull::new(attr_ptr) {
-      Some(inner) => Ok(Value {
-        inner,
-        state: self.state,
-      }),
+      Some(inner) => {
+        Ok(Value {
+          inner,
+          state: self.state,
+        })
+      },
       None => {
         // Distinguish missing-key (no error on context) from an actual API
         // failure that parked a message on the context.
