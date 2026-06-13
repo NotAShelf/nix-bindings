@@ -242,9 +242,11 @@ impl Drop for StorePath {
   }
 }
 
-// SAFETY: StorePath can be shared between threads
+// SAFETY: StorePath can be moved between threads but most accessor
+// methods take &Context internally and race on the context's error
+// buffer; sharing across threads concurrently is unsound. See Context's
+// note in lib.rs.
 unsafe impl Send for StorePath {}
-unsafe impl Sync for StorePath {}
 
 impl fmt::Debug for StorePath {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -401,9 +403,8 @@ impl Drop for Derivation {
   }
 }
 
-// SAFETY: Derivation can be shared between threads
+// SAFETY: see StorePath / Context above.
 unsafe impl Send for Derivation {}
-unsafe impl Sync for Derivation {}
 
 impl fmt::Debug for Derivation {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -961,9 +962,8 @@ impl Drop for Store {
   }
 }
 
-// SAFETY: Store can be shared between threads
+// SAFETY: see StorePath / Context above.
 unsafe impl Send for Store {}
-unsafe impl Sync for Store {}
 
 impl fmt::Debug for Store {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

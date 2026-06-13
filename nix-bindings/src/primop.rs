@@ -1224,10 +1224,10 @@ pub struct PrimOp {
 /// twice; the Nix C API silently accepts that today.
 static REGISTERED_PRIMOPS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-// SAFETY: PrimOp contains raw pointers but is only ever manipulated on a
-// single thread. The underlying PrimOp object is GC-managed.
+// SAFETY: PrimOp can be moved between threads. It is !Sync because its
+// methods take &Context internally, and concurrent calls would race on
+// the context's error buffer. See Context's note in lib.rs.
 unsafe impl Send for PrimOp {}
-unsafe impl Sync for PrimOp {}
 
 impl PrimOp {
   /// Create a new primop backed by the given Rust closure.

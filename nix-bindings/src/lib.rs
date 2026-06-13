@@ -461,11 +461,14 @@ impl Drop for Context {
   }
 }
 
+// SAFETY: Context owns a `nix_c_context` which is exclusively-owned mutable
+// state (the error buffer is rewritten on every C call). Moving between
+// threads is fine. Sharing concurrently from multiple threads is not: a
+// concurrent set_setting/get_setting would race on the buffer. We expose
+// only Send and leave it to callers to wrap in a Mutex if they want shared
+// access from more than one thread.
 #[cfg(feature = "store")]
 unsafe impl Send for Context {}
-
-#[cfg(feature = "store")]
-unsafe impl Sync for Context {}
 
 /// Builder for Nix evaluation state.
 ///
@@ -1000,11 +1003,13 @@ impl Drop for EvalState {
   }
 }
 
+// SAFETY: EvalState holds a *mut sys::EvalState plus an Arc<Context>. The
+// underlying evaluator carries mutable state of its own and shares the
+// context's error buffer; concurrent use from two threads would race. We
+// expose only Send; callers who need shared concurrent access must wrap in
+// a Mutex. See the matching note on Context above.
 #[cfg(feature = "expr")]
 unsafe impl Send for EvalState {}
-
-#[cfg(feature = "expr")]
-unsafe impl Sync for EvalState {}
 
 /// Nix value types.
 #[cfg(feature = "expr")]
