@@ -32,7 +32,7 @@ unsafe extern "C" fn add_one_primop(
       nix_set_err_msg(
         context,
         nix_err_NIX_ERR_UNKNOWN,
-        b"Null pointer in add_one_primop\0".as_ptr() as *const _,
+        c"Null pointer in add_one_primop".as_ptr(),
       )
     };
     return;
@@ -48,7 +48,7 @@ unsafe extern "C" fn add_one_primop(
       nix_set_err_msg(
         context,
         nix_err_NIX_ERR_UNKNOWN,
-        b"Missing argument in add_one_primop\0".as_ptr() as *const _,
+        c"Missing argument in add_one_primop".as_ptr(),
       )
     };
     return;
@@ -65,7 +65,7 @@ unsafe extern "C" fn add_one_primop(
       nix_set_err_msg(
         context,
         nix_err_NIX_ERR_UNKNOWN,
-        b"Expected integer argument in add_one_primop\0".as_ptr() as *const _,
+        c"Expected integer argument in add_one_primop".as_ptr(),
       )
     };
     return;
@@ -113,7 +113,7 @@ unsafe extern "C" fn concat_strings_primop(
         nix_set_err_msg(
           context,
           nix_err_NIX_ERR_UNKNOWN,
-          b"Missing argument in concat_strings_primop\0".as_ptr() as *const _,
+          c"Missing argument in concat_strings_primop".as_ptr(),
         )
       };
       return;

@@ -980,7 +980,6 @@ impl<'a> PrimOpValue<'a> {
   ///
   /// Returns an error if forcing fails or the resolved value is not an
   /// attribute set.
-  #[must_use]
   pub fn as_attrs(&self) -> Result<ArgAttrs<'_>> {
     self.force()?;
     if self.value_type() != ValueType::Attrs {
@@ -1007,7 +1006,6 @@ impl<'a> PrimOpValue<'a> {
   ///
   /// Returns an error if forcing fails or the resolved value is not a
   /// list.
-  #[must_use]
   pub fn as_list(&self) -> Result<ArgList<'_>> {
     self.force()?;
     if self.value_type() != ValueType::List {
@@ -1749,9 +1747,9 @@ mod tests {
       assert_eq!(int_val.value_type(), ValueType::Int);
       assert_eq!(int_val.as_int()?, -42);
 
-      let float_val = ret.make_float(3.14)?;
+      let float_val = ret.make_float(2.5)?;
       assert_eq!(float_val.value_type(), ValueType::Float);
-      assert!((float_val.as_float()? - 3.14).abs() < 1e-9);
+      assert!((float_val.as_float()? - 2.5).abs() < 1e-9);
 
       let bool_val = ret.make_bool(true)?;
       assert_eq!(bool_val.value_type(), ValueType::Bool);
