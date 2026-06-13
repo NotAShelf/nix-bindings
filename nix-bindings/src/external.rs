@@ -370,10 +370,14 @@ pub struct ExternalValueHandle<'s> {
   ext_ptr: *mut sys::ExternalValue,
 }
 
-// SAFETY: ExternalValueHandle wraps a Value<'s> tied to an EvalState. It
-// inherits the same "Send-only, not Sync" stance as Context/EvalState:
-// concurrent access across threads would race the context's error buffer.
-// See Context's note in lib.rs.
+// SAFETY: `ExternalValueHandle` wraps an owned `Value<'s>` plus the raw
+// `*mut sys::ExternalValue` it was constructed from. The Nix GC owns the
+// external value; we hold a single reference through the inner `Value`.
+// The user-provided payload requires `T: NixExternal: Send + Sync`, so
+// moving the wrapper to another thread does not expose any
+// thread-affine Rust data. `Sync` is NOT implemented because
+// `as_external` calls into `Context` to fetch the payload, racing on
+// its error buffer.
 unsafe impl Send for ExternalValueHandle<'_> {}
 
 impl<'s> Deref for ExternalValueHandle<'s> {

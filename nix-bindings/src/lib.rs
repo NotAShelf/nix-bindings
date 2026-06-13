@@ -26,6 +26,59 @@
 //! }
 //! ```
 //!
+//! # Thread Safety
+//!
+//! The underlying Nix C API stores per-call error state on
+//! [`Context`]. Every C entry point that takes a `nix_c_context *`
+//! rewrites that buffer, so two threads sharing a [`Context`]
+//! concurrently race on it. The C++ evaluator is also not designed for
+//! concurrent mutation from multiple threads.
+//!
+//! To make this hard to misuse, every wrapper in this crate is **`Send`
+//! but not `Sync`**:
+//!
+//! | Trait   | What it means                                     | Allowed |
+//! |---------|---------------------------------------------------|---------|
+//! | `Send`  | Move ownership of a value to another thread       | yes     |
+//! | `!Sync` | Share `&T` with another thread (incl. via `Arc`)  | no      |
+//!
+//! In practice that gives you three usage patterns:
+//!
+//! 1. **Single-threaded.** The common case. Build [`Context`],
+//!    [`Store`], [`EvalState`] on one thread and stay there. Nothing
+//!    extra to do.
+//! 2. **Move to a worker.** Build the wrappers on the main thread,
+//!    `std::thread::spawn` and move them in. The destination thread
+//!    becomes the new sole owner.
+//! 3. **Concurrent access.** Wrap the [`Context`] (or higher-level
+//!    wrapper) in `Arc<Mutex<_>>` yourself. The bindings will not do
+//!    this for you because most users do not need it, and the lock
+//!    would hide the underlying single-threaded contract.
+//!
+//! ## A note on `Arc<Context>`
+//!
+//! [`Store`], [`EvalState`], and the flake/primop/external types hold
+//! `Arc<Context>` so the C context lives as long as any wrapper that
+//! references it. Because [`Context`] is not `Sync`, `Arc<Context>` is
+//! not `Send` by Rust's auto-traits. The wrappers nonetheless implement
+//! `Send` through an `unsafe impl`. The unsafe assertion is: *when you
+//! move a wrapper across threads, no other thread retains an alias to
+//! the same `Arc<Context>` that it will continue to call into.*
+//!
+//! Concretely: do not clone `Arc<Context>`, build two stores from it,
+//! send one store to thread B, and keep using the other from thread A.
+//! That is a data race the compiler cannot catch. Either move both
+//! wrappers together, or put a `Mutex` in front of [`Context`].
+//!
+//! ## Callback-scoped types
+//!
+//! Inside a primop callback the trampoline hands you wrappers
+//! ([`primop::PrimOpArg`], [`primop::PrimOpRet`], [`primop::PrimOpValue`],
+//! [`primop::ArgAttrs`], [`primop::ArgList`]) that borrow raw pointers
+//! valid only for that one call. They are neither `Send` nor `Sync` by
+//! construction; do not stash them in a thread-local or send them off
+//! the trampoline.
+//!
 //! # Value Formatting
 //!
 //! Values support multiple formatting options:
@@ -461,12 +514,12 @@ impl Drop for Context {
   }
 }
 
-// SAFETY: Context owns a `nix_c_context` which is exclusively-owned mutable
-// state (the error buffer is rewritten on every C call). Moving between
-// threads is fine. Sharing concurrently from multiple threads is not: a
-// concurrent set_setting/get_setting would race on the buffer. We expose
-// only Send and leave it to callers to wrap in a Mutex if they want shared
-// access from more than one thread.
+// SAFETY: `nix_c_context` is exclusively-owned mutable state. Moving the
+// pointer to another thread is sound provided the source thread releases
+// ownership; the Box-like value semantics of `Context` already enforce
+// that at the type level. `Sync` is NOT implemented: every C entry point
+// rewrites the per-context error buffer, so two threads holding
+// `&Context` would race on that buffer with no synchronization.
 #[cfg(feature = "store")]
 unsafe impl Send for Context {}
 
@@ -1032,11 +1085,17 @@ impl Drop for EvalState {
   }
 }
 
-// SAFETY: EvalState holds a *mut sys::EvalState plus an Arc<Context>. The
-// underlying evaluator carries mutable state of its own and shares the
-// context's error buffer; concurrent use from two threads would race. We
-// expose only Send; callers who need shared concurrent access must wrap in
-// a Mutex. See the matching note on Context above.
+// SAFETY: `EvalState` owns its `*mut sys::EvalState` outright and only
+// references the C context through `Arc<Context>`. Moving the wrapper
+// hands sole ownership of the evaluator handle to the destination
+// thread; the C++ evaluator does not look at thread-local state, so the
+// move is sound. We rely on the caller not to retain a clone of the
+// same `Arc<Context>` and call into it concurrently from another
+// thread; see the `# Thread Safety` section in the crate root.
+//
+// `Sync` is NOT implemented: every C entry point rewrites the
+// per-context error buffer that this evaluator shares with `Context`,
+// so concurrent `&EvalState` use across threads would race.
 #[cfg(feature = "expr")]
 unsafe impl Send for EvalState {}
 

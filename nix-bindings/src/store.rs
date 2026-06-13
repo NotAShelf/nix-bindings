@@ -244,10 +244,14 @@ impl Drop for StorePath {
   }
 }
 
-// SAFETY: StorePath can be moved between threads but most accessor
-// methods take &Context internally and race on the context's error
-// buffer; sharing across threads concurrently is unsound. See Context's
-// note in lib.rs.
+// SAFETY: `StorePath` owns its `*mut sys::StorePath` outright; the C
+// object has no thread affinity. Accessor methods route through
+// `Arc<Context>` which the move carries along. The caller is
+// responsible for not keeping a cloned `Arc<Context>` live on the
+// source thread (see the `# Thread Safety` section in the crate root).
+//
+// `Sync` is NOT implemented: name/hash accessors touch the shared
+// context error buffer; concurrent `&StorePath` reads would race.
 unsafe impl Send for StorePath {}
 
 impl fmt::Debug for StorePath {
@@ -405,7 +409,14 @@ impl Drop for Derivation {
   }
 }
 
-// SAFETY: see StorePath / Context above.
+// SAFETY: `Derivation` owns its `*mut sys::nix_derivation` outright and
+// keeps the context alive through `Arc<Context>`. Same move-only
+// contract as `StorePath`: source thread must not retain an aliased
+// `Arc<Context>` and call into the C API concurrently.
+//
+// `Sync` is NOT implemented: `to_json`, `add_to_store`, and
+// `from_store_path` write through the context error buffer that
+// `&Derivation` shares with every other wrapper.
 unsafe impl Send for Derivation {}
 
 impl fmt::Debug for Derivation {
@@ -994,7 +1005,14 @@ impl Drop for Store {
   }
 }
 
-// SAFETY: see StorePath / Context above.
+// SAFETY: `Store` owns its `*mut sys::Store` and keeps the context
+// alive through `Arc<Context>`. The Nix store handle is documented as
+// safe to move between threads provided no other thread is currently
+// driving it. Same `Arc<Context>` aliasing caveat as `StorePath` and
+// `Derivation` above.
+//
+// `Sync` is NOT implemented: every accessor (`uri`, `realize`,
+// `copy_path`, ...) writes through the shared context error buffer.
 unsafe impl Send for Store {}
 
 impl fmt::Debug for Store {

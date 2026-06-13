@@ -83,7 +83,11 @@ impl Drop for FlakeSettings {
   }
 }
 
-// SAFETY: see Context's thread-safety note in lib.rs.
+// SAFETY: `FlakeSettings` owns its `nix_flake_settings*` and uses the
+// `Arc<Context>` purely for lifetime extension. The settings object
+// holds plain configuration values with no thread affinity. `Sync` is
+// NOT implemented: every method that consults the settings goes through
+// `Context`'s racy error buffer.
 unsafe impl Send for FlakeSettings {}
 
 /// Fetcher configuration.
@@ -126,7 +130,11 @@ impl Drop for FetchersSettings {
   }
 }
 
-// SAFETY: see Context's thread-safety note in lib.rs.
+// SAFETY: `FetchersSettings` is an opaque pointer to plain configuration
+// values, kept alive by `Arc<Context>`. The C object has no thread
+// affinity. `Sync` is NOT implemented for the same reason as
+// `FlakeSettings`: any call into it routes through `Context`'s racy
+// error buffer.
 unsafe impl Send for FetchersSettings {}
 
 /// Flags that control how a flake reference string is parsed.
@@ -201,7 +209,11 @@ impl Drop for FlakeReferenceParseFlags {
   }
 }
 
-// SAFETY: see Context's thread-safety note in lib.rs.
+// SAFETY: `FlakeReferenceParseFlags` is a small flags struct kept alive
+// by `Arc<Context>` plus `Arc<FlakeSettings>`. Both Arcs are themselves
+// `Send` for our types (see their notes). The C object has no thread
+// affinity. `Sync` is NOT implemented: `set_base_directory` mutates
+// state through `Context`'s racy error buffer.
 unsafe impl Send for FlakeReferenceParseFlags {}
 
 /// Lock-file update strategy for [`LockFlags::set_mode`].
@@ -327,7 +339,11 @@ impl Drop for LockFlags {
   }
 }
 
-// SAFETY: see Context's thread-safety note in lib.rs.
+// SAFETY: `LockFlags` is a small mode-and-overrides struct kept alive
+// by `Arc<Context>` plus `Arc<FlakeSettings>`. Same move-only contract
+// as `FlakeReferenceParseFlags`. `Sync` is NOT implemented:
+// `set_mode` and `add_input_override` mutate through `Context`'s racy
+// error buffer.
 unsafe impl Send for LockFlags {}
 
 /// Callback that collects a string returned from the Nix C API via a pointer
@@ -416,7 +432,13 @@ impl Drop for FlakeReference {
   }
 }
 
-// SAFETY: see Context's thread-safety note in lib.rs.
+// SAFETY: `FlakeReference` wraps a parsed but unresolved reference value
+// owned outright via `nix_flake_reference*`, kept alive by
+// `Arc<Context>`. Resolution happens later through `LockedFlake::lock`,
+// which calls into `Context`; sending the unresolved value to another
+// thread before locking is sound. `Sync` is NOT implemented because
+// `lock` and `add_input_override` mutate through `Context`'s error
+// buffer.
 unsafe impl Send for FlakeReference {}
 
 /// A fully locked flake.
@@ -503,7 +525,11 @@ impl Drop for LockedFlake {
   }
 }
 
-// SAFETY: see Context's thread-safety note in lib.rs.
+// SAFETY: `LockedFlake` owns its `nix_locked_flake*` and keeps the
+// context alive via `Arc<Context>`. The locked-flake value is immutable
+// once produced; calling `output_attrs` only reads from it but still
+// routes through `Context`'s error buffer, which is why `Sync` is NOT
+// implemented.
 unsafe impl Send for LockedFlake {}
 
 #[cfg(test)]
