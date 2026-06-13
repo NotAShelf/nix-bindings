@@ -152,6 +152,11 @@ fn main() {
 
     if env::var("CARGO_FEATURE_EXPR").is_ok() {
       cc_build.file("src/wrappers/init_path.cc");
+      // init_path.cc calls nix::EvalState::allowPath, which lives in the
+      // C++ libnixexpr (not in the C wrapper libnixexprc that pkg-config
+      // for nix-expr-c reports). Force the C++ library onto the link line
+      // so dependent crates that only touch the C API still link.
+      println!("cargo:rustc-link-lib=dylib=nixexpr");
     }
 
     cc_build.compile("nix_shims");
