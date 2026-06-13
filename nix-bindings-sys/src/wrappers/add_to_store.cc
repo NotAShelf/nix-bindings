@@ -51,3 +51,26 @@ nix_err nix_store_add_bytes_to_store(nix_c_context *context, Store *store,
   }
   NIXC_CATCH_ERRS
 }
+
+nix_err nix_store_path_to_string(nix_c_context *context, Store *store,
+                                 const StorePath *path,
+                                 nix_get_string_callback callback,
+                                 void *user_data) {
+  if (context)
+    context->last_err_code = NIX_OK;
+
+  if (store == nullptr)
+    return nix_set_err_msg(context, NIX_ERR_UNKNOWN, "store is null");
+  if (path == nullptr)
+    return nix_set_err_msg(context, NIX_ERR_UNKNOWN, "path is null");
+  if (callback == nullptr)
+    return nix_set_err_msg(context, NIX_ERR_UNKNOWN, "callback is null");
+
+  try {
+    auto rendered = store->ptr->printStorePath(path->path);
+    callback(rendered.c_str(),
+             static_cast<unsigned int>(rendered.size()), user_data);
+    return NIX_OK;
+  }
+  NIXC_CATCH_ERRS
+}

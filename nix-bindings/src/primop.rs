@@ -488,6 +488,29 @@ impl<'a> PrimOpRet<'a> {
     }
   }
 
+  /// Type-safe variant of [`set_store_path`](Self::set_store_path).
+  ///
+  /// Takes a parsed [`StorePath`](crate::store::StorePath) instead of a raw
+  /// string. Eliminates the chance of passing a non-store-path string that
+  /// would be rejected by Nix's parser at the C++ level. Uses
+  /// [`Store::print_path`](crate::store::Store::print_path) to render the
+  /// path back to its canonical form.
+  ///
+  /// Requires the `shim` and `store` features.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if rendering or the write fails.
+  #[cfg(all(feature = "shim", feature = "store"))]
+  pub fn set_store_path_typed(
+    &mut self,
+    store: &crate::store::Store,
+    path: &crate::store::StorePath,
+  ) -> Result<()> {
+    let rendered = store.print_path(path)?;
+    self.set_store_path(&rendered)
+  }
+
   /// Write a store path as a Nix path value, registering it as accessible
   /// in the evaluator's allowlist first.
   ///
@@ -733,6 +756,27 @@ impl<'a> PrimOpRet<'a> {
       )?;
     }
     Ok(v)
+  }
+
+  /// Type-safe variant of [`make_store_path`](Self::make_store_path).
+  ///
+  /// Takes a parsed [`StorePath`](crate::store::StorePath) and renders it
+  /// to a canonical string via
+  /// [`Store::print_path`](crate::store::Store::print_path).
+  ///
+  /// Requires the `shim` and `store` features.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if rendering or initialisation fails.
+  #[cfg(all(feature = "shim", feature = "store"))]
+  pub fn make_store_path_typed(
+    &self,
+    store: &crate::store::Store,
+    path: &crate::store::StorePath,
+  ) -> Result<PrimOpValue<'a>> {
+    let rendered = store.print_path(path)?;
+    self.make_store_path(&rendered)
   }
 
   /// Allocate and initialise a store path [`PrimOpValue`], registering it as
