@@ -109,6 +109,10 @@ fn main() {
     let mut cc_build = cc::Build::new();
     cc_build.cpp(true);
     cc_build.flag("-std=c++23");
+    cc_build.flag("-Wno-missing-field-initializers");
+    cc_build.flag("-Wno-cpp");
+    cc_build.flag("-Wno-interference-size");
+    cc_build.flag("-Wno-unused-parameter");
     cc_build.include("include");
 
     for pc in ["nix-store", "nix-util", "nix-store-c", "nix-util-c"] {
