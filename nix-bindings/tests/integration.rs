@@ -1,4 +1,9 @@
 #![cfg(feature = "expr")]
+// `Arc<Context>` is the documented lifetime-sharing pattern for this
+// crate; clippy's `arc_with_non_send_sync` would otherwise fire on
+// every test setup. See the `# Thread Safety` section in the crate
+// root for the rationale.
+#![allow(clippy::arc_with_non_send_sync)]
 
 use std::{process::Command, sync::Arc};
 

@@ -1,4 +1,11 @@
 #![warn(missing_docs)]
+// The crate intentionally uses `Arc<Context>` for shared-ownership
+// lifetime extension within a single thread. `Context` is `Send` but
+// not `Sync`, which trips clippy's `arc_with_non_send_sync` lint on
+// every `Arc::new(Context::new()?)` in the test suite even though the
+// pattern is the documented one. See the crate-level `# Thread Safety`
+// section.
+#![cfg_attr(test, allow(clippy::arc_with_non_send_sync))]
 //! High-level, safe Rust bindings for the Nix build tool.
 //!
 //! This crate provides ergonomic and idiomatic Rust APIs for interacting
@@ -44,16 +51,15 @@
 //!
 //! In practice that gives you three usage patterns:
 //!
-//! 1. **Single-threaded.** The common case. Build [`Context`],
-//!    [`Store`], [`EvalState`] on one thread and stay there. Nothing
-//!    extra to do.
+//! 1. **Single-threaded.** The common case. Build [`Context`], [`Store`],
+//!    [`EvalState`] on one thread and stay there. Nothing extra to do.
 //! 2. **Move to a worker.** Build the wrappers on the main thread,
-//!    `std::thread::spawn` and move them in. The destination thread
-//!    becomes the new sole owner.
-//! 3. **Concurrent access.** Wrap the [`Context`] (or higher-level
-//!    wrapper) in `Arc<Mutex<_>>` yourself. The bindings will not do
-//!    this for you because most users do not need it, and the lock
-//!    would hide the underlying single-threaded contract.
+//!    `std::thread::spawn` and move them in. The destination thread becomes the
+//!    new sole owner.
+//! 3. **Concurrent access.** Wrap the [`Context`] (or higher-level wrapper) in
+//!    `Arc<Mutex<_>>` yourself. The bindings will not do this for you because
+//!    most users do not need it, and the lock would hide the underlying
+//!    single-threaded contract.
 //!
 //! ## A note on `Arc<Context>`
 //!
@@ -271,14 +277,7 @@ pub fn is_pure_eval() -> bool {
   // ignored, and a missing key means the default (false).
   unsafe {
     let val = string_from_callback(|cb, ud| {
-      sys::nix_setting_get(
-        std::ptr::null_mut(),
-        std::ffi::CStr::from_bytes_with_nul(b"pure-eval\0")
-          .unwrap()
-          .as_ptr(),
-        cb,
-        ud,
-      );
+      sys::nix_setting_get(std::ptr::null_mut(), c"pure-eval".as_ptr(), cb, ud);
     });
     val.as_deref() == Some("true")
   }

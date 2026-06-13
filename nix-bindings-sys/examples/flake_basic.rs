@@ -146,7 +146,7 @@ unsafe fn print_attrset(
                 print!("{}", v);
               },
               nix_bindings_sys::ValueType_NIX_TYPE_ATTRS => {
-                print!("\n");
+                println!();
                 unsafe {
                   print_attrset(ctx, elem, state, indent + 4, depth + 1)
                 };
