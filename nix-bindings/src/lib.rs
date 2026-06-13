@@ -200,6 +200,37 @@ where
   result
 }
 
+/// Returns `true` when Nix is running in pure evaluation mode (`--pure-eval`).
+///
+/// Reads the global `pure-eval` Nix setting.  The result reflects the setting
+/// at call time and is stable for the lifetime of a single Nix evaluation.
+///
+/// # Use in primops
+///
+/// [`primop::PrimOpRet::set_path`] and [`primop::PrimOpRet::make_path`] call
+/// `nix_init_path_string` internally, which the Nix evaluator rejects for
+/// absolute paths in pure mode.  Check this function first so your primop can
+/// make the right call: return an explicit error, use a string, or refuse to
+/// run at all.
+#[cfg(feature = "store")]
+pub fn is_pure_eval() -> bool {
+  // SAFETY: nix_setting_get is safe with a null context; errors are silently
+  // ignored, and a missing key means the default (false).
+  unsafe {
+    let val = string_from_callback(|cb, ud| {
+      sys::nix_setting_get(
+        std::ptr::null_mut(),
+        std::ffi::CStr::from_bytes_with_nul(b"pure-eval\0")
+          .unwrap()
+          .as_ptr(),
+        cb,
+        ud,
+      );
+    });
+    val.as_deref() == Some("true")
+  }
+}
+
 /// Check a Nix error code and convert to `Result`, extracting the real
 /// error message from the context.
 #[cfg(feature = "store")]
@@ -774,10 +805,16 @@ impl EvalState {
 
   /// Create a Nix path value.
   ///
+  /// # Pure Evaluation
+  ///
+  /// This calls `nix_init_path_string`, which the Nix evaluator rejects for
+  /// absolute paths when running with `--pure-eval`.  Check [`is_pure_eval`]
+  /// before calling if your code must work in both modes.
+  ///
   /// # Errors
   ///
-  /// Returns an error if value allocation, path conversion, or
-  /// initialization fails.
+  /// Returns an error if value allocation, path conversion, initialization
+  /// fails, or Nix is running in pure evaluation mode and `path` is absolute.
   pub fn make_path(&self, path: impl AsRef<Path>) -> Result<Value<'_>> {
     let v = self.alloc_value()?;
     let path_str = path
