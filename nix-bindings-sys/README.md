@@ -23,7 +23,7 @@ Using `nix-binding-sys` is straightforward. Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-nix-bindings-sys = "0.2324.0" # your Nix version must match the crate version.
+nix-bindings-sys = "0.2347.3" # your Nix version must match the crate version.
 ```
 
 To pull only the C libraries you need, disable default features and opt in:
@@ -32,7 +32,7 @@ To pull only the C libraries you need, disable default features and opt in:
 
 ```toml
 [dependencies]
-nix-bindings-sys = { version = "0.2324.0", default-features = false, features = ["store", "expr", "util"] }
+nix-bindings-sys = { version = "0.2347.3", default-features = false, features = ["store", "expr", "util"] }
 ```
 
 <!--markdownlint-enable MD013-->
@@ -65,6 +65,26 @@ self-contained examples in case you decide to use this crate. You may run them
 with `cargo run --example <example>`, e.g., `cargo run --example eval_basic`. In
 addition to providing results, the code in the examples directory can help guide
 you to use this library.
+
+## Thread safety
+
+The raw C API is not internally synchronised, and this crate does not add any
+synchronisation on top. Concretely:
+
+- Treat `nix_c_context*` as thread-local. Every `nix_*` call writes the
+  context's error buffer, so sharing a single context across threads will race
+  on that buffer.
+- `nix_libutil_init`, `nix_libstore_init`, and `nix_libexpr_init` are one-shot
+  per process. Later calls are silent no-ops and any settings you try to apply
+  through them may not stick.
+- Threads that touch `nix_value*` must be registered with the bdwgc collector.
+  The thread that called the `init` functions is registered automatically; other
+  threads must register themselves before any value access or the GC will
+  reclaim live values out from under you.
+- A few C++ entry points (notably `nix_store_parse_path` on a non-store path)
+  propagate C++ exceptions across the FFI boundary. Rust cannot catch these;
+  validate inputs before calling. The high-level `nix-bindings` crate guards the
+  known offenders.
 
 ## Testing
 

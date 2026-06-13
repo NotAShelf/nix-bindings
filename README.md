@@ -81,7 +81,9 @@ comments, examples and everything else provided by individual crate READMEs.
 ## Contributing
 
 Contributions are welcome! If you have noticed something missing and would like
-to patch it yourself, I would appreciate contributions. Please:
+to patch it yourself, I would appreciate contributions. Please read
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) first; it covers about everything you
+need to know, but here is a short version:
 
 - Keep examples and tests small, focused, and idiomatic
 - Follow Rust FFI safety best practices

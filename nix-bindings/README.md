@@ -35,7 +35,7 @@ Add nix-bindings to your `Cargo.toml`:
 ```toml
 # Cargo.toml
 [dependencies]
-nix-bindings = "0.2328.0"
+nix-bindings = "0.2347.3"
 ```
 
 The full crate (default) enables all modules. To exclude features you don't
@@ -45,7 +45,7 @@ need, disable defaults and pick:
 
 ```toml
 [dependencies]
-nix-bindings = { version = "0.2324.0", default-features = false, features = ["store", "primop"] }
+nix-bindings = { version = "0.2347.3", default-features = false, features = ["store", "primop"] }
 ```
 
 <!--markdownlint-enable MD013-->
@@ -67,6 +67,44 @@ let state = EvalStateBuilder::new(&store)?.build()?;
 let result = state.eval_from_string("1 + 2", "<eval>")?;
 println!("Result: {}", result.as_int()?);
 ```
+
+Registering a custom primop as a global builtin (must happen before any
+`EvalState` is built):
+
+```rust
+use std::sync::Arc;
+use nix_bindings::{Context, EvalStateBuilder, Store, primop::PrimOp};
+
+let ctx = Arc::new(Context::new()?);
+
+PrimOp::new(&ctx, "double", 1, Some("Double an integer"), |args, ret| {
+    let n = args[0].as_int()?;
+    ret.set_int(n * 2)
+})?
+.register(&ctx)?;
+
+let store = Arc::new(Store::open(&ctx, None)?);
+let state = EvalStateBuilder::new(&store)?.build()?;
+let result = state.eval_from_string("builtins.double 21", "<eval>")?;
+assert_eq!(result.as_int()?, 42);
+```
+
+## Thread safety
+
+All public wrapper types (`Context`, `EvalState`, `Store`, `StorePath`,
+`Derivation`, `Value`, primop and flake wrappers) are `Send` but not `Sync`. You
+can move them across threads, but you cannot share `&T` across threads.
+
+The reason is `nix_c_context`: every `nix_*` call mutates a per-context error
+buffer, so sharing `&Context` would race on that buffer. The crate makes the
+public surface `!Sync` by construction so this is a compile error rather than a
+runtime data race.
+
+`Arc<Context>` is the documented lifetime-sharing pattern. It is for shared
+_ownership_, not shared _access_: if you `Arc::clone` a `Context` and move both
+halves to different threads, you must drop all but one half before any thread
+touches a wrapper that holds it. The full contract is in the `# Thread Safety`
+section at the top of `src/lib.rs`.
 
 ## Testing
 
