@@ -370,12 +370,12 @@ pub struct PrimOpArg<'a> {
   _phantom: PhantomData<&'a ()>,
 }
 
-// PrimOpArg is callback-frame-scoped: its raw context and EvalState pointers
-// only stay valid while the trampoline is on the stack. Marking it Send would
-// let a user move it into a thread that outlives the call, which would be a
-// use-after-free. The PhantomData<&'a ()> already makes it !Send + !Sync
-// implicitly via the raw pointers, so we deliberately do NOT add Send/Sync
-// impls here.
+// `PrimOpArg`'s raw `nix_c_context` and `EvalState` pointers are valid
+// only while the trampoline is on the stack. The `'a` lifetime + raw
+// pointer fields leave the type `!Send + !Sync` by auto-trait, which is
+// exactly what we want: a `Send` impl would let a user smuggle the
+// argument into a thread that outlives the call and dereference a
+// dangling context.
 
 impl sealed::NixValueRaw for PrimOpArg<'_> {
   fn raw_ctx(&self) -> *mut sys::nix_c_context {
@@ -929,10 +929,11 @@ pub struct PrimOpValue<'a> {
   _phantom: PhantomData<&'a ()>,
 }
 
-// PrimOpValue holds raw pointers borrowed from the callback frame, expressed
-// by the 'a lifetime. The PhantomData<&'a ()> makes it !Send + !Sync
-// automatically, which is what we want: moving one across threads would let
-// it outlive the EvalState it points into.
+// `PrimOpValue` holds a GC reference (released on Drop) plus raw context
+// and state pointers borrowed from the callback frame, expressed by
+// `'a`. The `PhantomData<&'a ()>` makes it `!Send + !Sync` via the
+// auto-trait. The wrapper must not outlive the trampoline frame: doing
+// so would dereference a dangling `EvalState*` on the next force/decref.
 
 impl sealed::NixValueRaw for PrimOpValue<'_> {
   fn raw_ctx(&self) -> *mut sys::nix_c_context {
@@ -1044,8 +1045,10 @@ pub struct ArgAttrs<'a> {
   _phantom: PhantomData<&'a ()>,
 }
 
-// ArgAttrs borrows from a callback-frame value; see PrimOpArg above for
-// why we deliberately omit Send/Sync impls.
+// `ArgAttrs` borrows from a callback-frame value through `'a`. Like
+// `PrimOpArg`, the raw context and state pointers are valid only while
+// the trampoline runs. We rely on the auto-trait derivation to keep the
+// type `!Send + !Sync`.
 
 impl<'a> ArgAttrs<'a> {
   /// Get an attribute by name.
@@ -1153,8 +1156,10 @@ pub struct ArgList<'a> {
   _phantom: PhantomData<&'a ()>,
 }
 
-// ArgList borrows from a callback-frame value; see PrimOpArg above for
-// why we deliberately omit Send/Sync impls.
+// `ArgList` borrows from a callback-frame value through `'a`. Same
+// rationale as `ArgAttrs` and `PrimOpArg`: auto-trait leaves the type
+// `!Send + !Sync`, which prevents the user from escaping the trampoline
+// with a dangling state pointer.
 
 impl<'a> ArgList<'a> {
   /// Get an element by index.
@@ -1230,9 +1235,14 @@ pub struct PrimOp {
 /// twice; the Nix C API silently accepts that today.
 static REGISTERED_PRIMOPS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-// SAFETY: PrimOp can be moved between threads. It is !Sync because its
-// methods take &Context internally, and concurrent calls would race on
-// the context's error buffer. See Context's note in lib.rs.
+// SAFETY: `PrimOp` owns its GC-allocated `*mut sys::PrimOp` until it is
+// either consumed by `register` or `into_value`, or released by `Drop`.
+// The GC-managed object itself is safe to hand off to another thread;
+// the `ClosureData` it points at is reachable only via the GC pointer.
+// `Arc<Context>` keeps the context alive on the destination thread.
+//
+// `Sync` is NOT implemented: `register` and `into_value` both mutate
+// state through `Context`'s racy error buffer.
 unsafe impl Send for PrimOp {}
 
 impl PrimOp {
