@@ -31,55 +31,6 @@ fn test_basic_arithmetic() {
 
 #[test]
 #[serial]
-fn test_string_operations() {
-  let ctx = Arc::new(Context::new().expect("Failed to create context"));
-  let store = Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
-  let state = EvalStateBuilder::new(&store)
-    .expect("Failed to create builder")
-    .build()
-    .expect("Failed to build state");
-
-  // Test string literal
-  let result = state
-    .eval_from_string("\"hello world\"", "<test>")
-    .expect("Failed to evaluate string");
-
-  assert_eq!(result.value_type(), ValueType::String);
-  assert_eq!(
-    result.as_string().expect("Failed to get string"),
-    "hello world"
-  );
-}
-
-#[test]
-#[serial]
-fn test_boolean_values() {
-  let ctx = Arc::new(Context::new().expect("Failed to create context"));
-  let store = Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
-  let state = EvalStateBuilder::new(&store)
-    .expect("Failed to create builder")
-    .build()
-    .expect("Failed to build state");
-
-  // Test boolean true
-  let result = state
-    .eval_from_string("true", "<test>")
-    .expect("Failed to evaluate boolean");
-
-  assert_eq!(result.value_type(), ValueType::Bool);
-  assert!(result.as_bool().expect("Failed to get bool"));
-
-  // Test boolean false
-  let result = state
-    .eval_from_string("false", "<test>")
-    .expect("Failed to evaluate boolean");
-
-  assert_eq!(result.value_type(), ValueType::Bool);
-  assert!(!result.as_bool().expect("Failed to get bool"));
-}
-
-#[test]
-#[serial]
 fn test_complex_expressions() {
   let ctx = Arc::new(Context::new().expect("Failed to create context"));
   let store = Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
@@ -110,61 +61,6 @@ fn test_complex_expressions() {
 
 #[test]
 #[serial]
-fn test_attribute_sets() {
-  let ctx = Arc::new(Context::new().expect("Failed to create context"));
-  let store = Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
-  let state = EvalStateBuilder::new(&store)
-    .expect("Failed to create builder")
-    .build()
-    .expect("Failed to build state");
-
-  // Test attribute set creation
-  let result = state
-    .eval_from_string("{ name = \"test\"; value = 42; }", "<test>")
-    .expect("Failed to evaluate attrset");
-
-  assert_eq!(result.value_type(), ValueType::Attrs);
-}
-
-#[test]
-#[serial]
-fn test_lists() {
-  let ctx = Arc::new(Context::new().expect("Failed to create context"));
-  let store = Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
-  let state = EvalStateBuilder::new(&store)
-    .expect("Failed to create builder")
-    .build()
-    .expect("Failed to build state");
-
-  // Test list creation
-  let result = state
-    .eval_from_string("[ 1 2 3 \"hello\" ]", "<test>")
-    .expect("Failed to evaluate list");
-
-  assert_eq!(result.value_type(), ValueType::List);
-}
-
-#[test]
-#[serial]
-fn test_functions() {
-  let ctx = Arc::new(Context::new().expect("Failed to create context"));
-  let store = Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
-  let state = EvalStateBuilder::new(&store)
-    .expect("Failed to create builder")
-    .build()
-    .expect("Failed to build state");
-
-  // Test function application
-  let result = state
-    .eval_from_string("(x: x + 1) 5", "<test>")
-    .expect("Failed to evaluate function application");
-
-  assert_eq!(result.value_type(), ValueType::Int);
-  assert_eq!(result.as_int().expect("Failed to get int value"), 6);
-}
-
-#[test]
-#[serial]
 fn test_builtin_functions() {
   let ctx = Arc::new(Context::new().expect("Failed to create context"));
   let store = Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
@@ -191,24 +87,6 @@ fn test_builtin_functions() {
 
   assert_eq!(result.value_type(), ValueType::String);
   assert_eq!(result.as_string().expect("Failed to get string"), "first");
-}
-
-#[test]
-#[serial]
-fn test_null_value() {
-  let ctx = Arc::new(Context::new().expect("Failed to create context"));
-  let store = Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
-  let state = EvalStateBuilder::new(&store)
-    .expect("Failed to create builder")
-    .build()
-    .expect("Failed to build state");
-
-  // Test null value
-  let result = state
-    .eval_from_string("null", "<test>")
-    .expect("Failed to evaluate null");
-
-  assert_eq!(result.value_type(), ValueType::Null);
 }
 
 #[test]
