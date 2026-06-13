@@ -1,10 +1,5 @@
 {
-  # We generally want to target the stable branch of NixOS, because it allows
-  # us to infer a "minimum stable release" to support. Namely, it allows for
-  # having a reference point, so we know what is ready for public use and what
-  # is not. Security and critical performance improvements are always included
-  # so it makes a good starting point.
-  inputs.nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+  inputs.nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
 
   outputs = {nixpkgs, ...}: let
     systems = ["x86_64-linux" "aarch64-linux"];
