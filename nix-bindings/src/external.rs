@@ -41,7 +41,12 @@
 //! }
 //! ```
 
-use std::{any::TypeId, ffi::CString, ops::Deref};
+use std::{
+  any::TypeId,
+  ffi::CString,
+  ops::Deref,
+  panic::{self, AssertUnwindSafe},
+};
 
 use crate::{Error, EvalState, Result, Value, sys};
 
@@ -76,11 +81,22 @@ pub trait NixExternal: Send + Sync + 'static {
   }
 }
 
+/// Magic sentinel that prefixes every [`ErasedPayload`].
+///
+/// The `equal` vtable callback is invoked with two raw `void*`s from Nix and
+/// has no protocol-level way to know whether the second pointer originated
+/// from this crate. Reading `type_id` from an unknown payload would be
+/// undefined behaviour, so we check this byte pattern first and bail if it
+/// does not match.
+const ERASED_PAYLOAD_MAGIC: u64 = 0x4E49585F455854; // "NIX_EXT"
+
 /// Heap-allocated wrapper that combines a boxed `T` with its [`TypeId`].
 ///
 /// This is the allocation stored behind the `void*` data pointer that is
 /// passed to [`nix_create_external_value`](sys::nix_create_external_value).
+#[repr(C)]
 struct ErasedPayload {
+  magic:   u64,
   type_id: TypeId,
 
   // The concrete data follows; we keep only a raw pointer into the T.
@@ -143,6 +159,7 @@ impl ErasedPayload {
     let data_ptr = Box::into_raw(data_box) as *mut std::os::raw::c_void;
 
     Box::into_raw(Box::new(ErasedPayload {
+      magic:        ERASED_PAYLOAD_MAGIC,
       type_id:      TypeId::of::<T>(),
       data:         data_ptr,
       drop_fn:      drop_erased::<T>,
@@ -153,8 +170,26 @@ impl ErasedPayload {
     }))
   }
 
+  /// Validate the magic sentinel before dereferencing as `ErasedPayload`.
+  ///
+  /// Returns `None` if the pointer is null or the sentinel does not match,
+  /// meaning the payload was not produced by this crate.
+  unsafe fn try_from_void<'a>(ptr: *mut std::os::raw::c_void) -> Option<&'a Self> {
+    if ptr.is_null() {
+      return None;
+    }
+    let candidate = unsafe { &*(ptr as *const ErasedPayload) };
+    if candidate.magic != ERASED_PAYLOAD_MAGIC {
+      return None;
+    }
+    Some(candidate)
+  }
+
+  /// Same as [`try_from_void`](Self::try_from_void) but panics if the sentinel
+  /// is wrong. Use only inside callbacks that own the payload (`print`,
+  /// `show_type`, `coerce_to_string`) where `self_` was produced by us.
   unsafe fn from_void<'a>(ptr: *mut std::os::raw::c_void) -> &'a Self {
-    unsafe { &*(ptr as *const ErasedPayload) }
+    unsafe { Self::try_from_void(ptr) }.expect("ErasedPayload sentinel mismatch")
   }
 }
 
@@ -175,34 +210,40 @@ static VTABLE: sys::NixCExternalValueDesc = {
     self_: *mut std::os::raw::c_void,
     printer: *mut sys::nix_printer,
   ) {
-    let payload = unsafe { ErasedPayload::from_void(self_) };
-    let s = unsafe { (payload.display_fn)(payload.data) };
-    if let Ok(cs) = CString::new(s) {
-      unsafe {
-        sys::nix_external_print(std::ptr::null_mut(), printer, cs.as_ptr());
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+      let payload = unsafe { ErasedPayload::from_void(self_) };
+      let s = unsafe { (payload.display_fn)(payload.data) };
+      if let Ok(cs) = CString::new(s) {
+        unsafe {
+          sys::nix_external_print(std::ptr::null_mut(), printer, cs.as_ptr());
+        }
       }
-    }
+    }));
   }
 
   unsafe extern "C" fn show_type(
     self_: *mut std::os::raw::c_void,
     res: *mut sys::nix_string_return,
   ) {
-    let payload = unsafe { ErasedPayload::from_void(self_) };
-    let name = unsafe { (payload.type_name_fn)(payload.data) };
-    if let Ok(cs) = CString::new(name) {
-      unsafe { sys::nix_set_string_return(res, cs.as_ptr()) };
-    }
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+      let payload = unsafe { ErasedPayload::from_void(self_) };
+      let name = unsafe { (payload.type_name_fn)(payload.data) };
+      if let Ok(cs) = CString::new(name) {
+        unsafe { sys::nix_set_string_return(res, cs.as_ptr()) };
+      }
+    }));
   }
 
   unsafe extern "C" fn type_of(
     _self: *mut std::os::raw::c_void,
     res: *mut sys::nix_string_return,
   ) {
-    // builtins.typeOf for all external values returns "nix-external".
-    if let Ok(cs) = CString::new("nix-external") {
-      unsafe { sys::nix_set_string_return(res, cs.as_ptr()) };
-    }
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+      // builtins.typeOf for all external values returns "nix-external".
+      if let Ok(cs) = CString::new("nix-external") {
+        unsafe { sys::nix_set_string_return(res, cs.as_ptr()) };
+      }
+    }));
   }
 
   unsafe extern "C" fn coerce_to_string(
@@ -212,29 +253,36 @@ static VTABLE: sys::NixCExternalValueDesc = {
     _copy_to_store: std::os::raw::c_int,
     res: *mut sys::nix_string_return,
   ) {
-    let payload = unsafe { ErasedPayload::from_void(self_) };
-    if let Some(s) = unsafe { (payload.coerce_fn)(payload.data) }
-      && let Ok(cs) = CString::new(s)
-    {
-      unsafe { sys::nix_set_string_return(res, cs.as_ptr()) };
-    }
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+      let payload = unsafe { ErasedPayload::from_void(self_) };
+      if let Some(s) = unsafe { (payload.coerce_fn)(payload.data) }
+        && let Ok(cs) = CString::new(s)
+      {
+        unsafe { sys::nix_set_string_return(res, cs.as_ptr()) };
+      }
+    }));
   }
 
   unsafe extern "C" fn equal(
     self_: *mut std::os::raw::c_void,
     other: *mut std::os::raw::c_void,
   ) -> std::os::raw::c_int {
-    let a = unsafe { ErasedPayload::from_void(self_) };
-    let b = unsafe { ErasedPayload::from_void(other) };
-    // Only compare if they share the same concrete type.
-    if a.type_id != b.type_id {
-      return 0;
-    }
-    if unsafe { (a.equal_fn)(a.data, b.data) } {
-      1
-    } else {
-      0
-    }
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+      let a = match unsafe { ErasedPayload::try_from_void(self_) } {
+        Some(p) => p,
+        None => return 0,
+      };
+      let b = match unsafe { ErasedPayload::try_from_void(other) } {
+        Some(p) => p,
+        None => return 0,
+      };
+      // Only compare if they share the same concrete type.
+      if a.type_id != b.type_id {
+        return 0;
+      }
+      if unsafe { (a.equal_fn)(a.data, b.data) } { 1 } else { 0 }
+    }));
+    result.unwrap_or(0)
   }
 
   // JSON and XML printing default to not-implemented (None).
