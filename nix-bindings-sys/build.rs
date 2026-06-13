@@ -23,7 +23,9 @@ impl ParseCallbacks for ProcessComments {
 fn main() {
   println!("cargo:rerun-if-changed=include/wrapper.h");
   println!("cargo:rerun-if-changed=include/nix_api_store_text.h");
+  println!("cargo:rerun-if-changed=include/nix_api_expr_shim.h");
   println!("cargo:rerun-if-changed=src/wrappers/add_to_store.cc");
+  println!("cargo:rerun-if-changed=src/wrappers/init_path.cc");
 
   // Dynamically get GCC's include path for standard headers (e.g., stdbool.h)
   let gcc_include = Command::new("gcc")
@@ -108,6 +110,16 @@ fn main() {
       }
     }
 
+    if env::var("CARGO_FEATURE_EXPR").is_ok() {
+      for pc in ["nix-expr", "nix-expr-c"] {
+        let lib = pkg_config::probe_library(pc)
+          .unwrap_or_else(|_| panic!("Unable to find .pc file for {pc}"));
+        for path in &lib.include_paths {
+          cc_build.include(path);
+        }
+      }
+    }
+
     // Pull `-isystem` paths from NIX_CFLAGS_COMPILE (toolchain include dirs
     // in a Nix dev shell) and surface them as `-I` to cc-rs. Then blank the
     // var for the child so the cc wrapper doesn't apply them a second time.
@@ -126,6 +138,11 @@ fn main() {
     cc_build.env("NIX_CFLAGS_COMPILE", "");
 
     cc_build.file("src/wrappers/add_to_store.cc");
+
+    if env::var("CARGO_FEATURE_EXPR").is_ok() {
+      cc_build.file("src/wrappers/init_path.cc");
+    }
+
     cc_build.compile("nix_api_store_text");
   }
 }
