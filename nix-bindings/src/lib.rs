@@ -355,21 +355,30 @@ impl Context {
 
     let ctx = Context { inner };
 
-    // Initialize required libraries
-    unsafe {
-      check_err(
-        ctx.inner.as_ptr(),
-        sys::nix_libutil_init(ctx.inner.as_ptr()),
-      )?;
-      check_err(
-        ctx.inner.as_ptr(),
-        sys::nix_libstore_init(ctx.inner.as_ptr()),
-      )?;
-      check_err(
-        ctx.inner.as_ptr(),
-        sys::nix_libexpr_init(ctx.inner.as_ptr()),
-      )?;
-    }
+    // The nix_lib*_init functions are documented as one-shot. Reinvoking
+    // them across Contexts is a waste at best and a race at worst; the
+    // Once gate ensures exactly one initialization per process.
+    static INIT: std::sync::Once = std::sync::Once::new();
+    let mut init_err: Result<()> = Ok(());
+    INIT.call_once(|| {
+      // SAFETY: nix_lib*_init are safe with a fresh context.
+      let r = (|| unsafe {
+        check_err(
+          ctx.inner.as_ptr(),
+          sys::nix_libutil_init(ctx.inner.as_ptr()),
+        )?;
+        check_err(
+          ctx.inner.as_ptr(),
+          sys::nix_libstore_init(ctx.inner.as_ptr()),
+        )?;
+        check_err(
+          ctx.inner.as_ptr(),
+          sys::nix_libexpr_init(ctx.inner.as_ptr()),
+        )
+      })();
+      init_err = r;
+    });
+    init_err?;
 
     Ok(ctx)
   }
@@ -687,14 +696,26 @@ impl EvalState {
     let expr = std::fs::read_to_string(path).map_err(|e| {
       Error::Unknown(format!("Failed to read file {}: {e}", path.display()))
     })?;
-    let base = path
-      .parent()
-      .unwrap_or_else(|| Path::new("."))
-      .to_str()
-      .ok_or_else(|| {
+    let base_path = path.parent().unwrap_or_else(|| Path::new("."));
+    // The C API takes a NUL-terminated path string. On Unix paths can carry
+    // non-UTF-8 bytes; preserve them by going through OsStr/bytes.
+    #[cfg(unix)]
+    let base_cstring = {
+      use std::os::unix::ffi::OsStrExt as _;
+      CString::new(base_path.as_os_str().as_bytes())?
+    };
+    #[cfg(not(unix))]
+    let base_cstring = {
+      let base = base_path.to_str().ok_or_else(|| {
         Error::Unknown("File path is not valid UTF-8".to_string())
       })?;
-    self.eval_from_string(&expr, base)
+      CString::new(base)?
+    };
+    // eval_from_string also wants a UTF-8 base path because it takes &str,
+    // so on non-UTF-8 paths convert via lossy fallback only for the error
+    // reporting label.
+    let base_str = base_cstring.to_string_lossy();
+    self.eval_from_string(&expr, &base_str)
   }
 
   /// Allocate a new uninitialized value.
@@ -1341,11 +1362,21 @@ impl Value<'_> {
       return Err(Error::NullPointer);
     }
 
-    // SAFETY: path_ptr is a valid C string
-    let path_str =
-      unsafe { CStr::from_ptr(path_ptr).to_string_lossy().into_owned() };
-
-    Ok(std::path::PathBuf::from(path_str))
+    // On Unix the kernel treats paths as arbitrary bytes, so we round-trip
+    // through OsStr to preserve any non-UTF-8 bytes the path may contain.
+    // On other targets fall back to the lossy UTF-8 conversion.
+    #[cfg(unix)]
+    {
+      use std::os::unix::ffi::OsStrExt as _;
+      let bytes = unsafe { CStr::from_ptr(path_ptr) }.to_bytes();
+      Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+      let path_str =
+        unsafe { CStr::from_ptr(path_ptr).to_string_lossy().into_owned() };
+      Ok(std::path::PathBuf::from(path_str))
+    }
   }
 
   /// Call this value as a function with a single argument.
@@ -1497,6 +1528,32 @@ impl Drop for Value<'_> {
     // the Nix C API when the value was returned). Release it here.
     unsafe {
       sys::nix_value_decref(self.state.context.as_ptr(), self.inner.as_ptr());
+    }
+  }
+}
+
+#[cfg(feature = "expr")]
+impl<'a> Clone for Value<'a> {
+  /// Clone a [`Value`] by incrementing its GC reference count.
+  ///
+  /// Both clones reference the same underlying Nix value; they are not
+  /// deep copies. Use [`copy`](Value::copy) when you need an independent
+  /// value slot.
+  ///
+  /// Panics if the C API rejects the incref, which should not happen for a
+  /// live value.
+  fn clone(&self) -> Self {
+    // SAFETY: context and value are valid; incref is idempotent.
+    let err = unsafe {
+      sys::nix_value_incref(self.state.context.as_ptr(), self.inner.as_ptr())
+    };
+    assert!(
+      err == sys::nix_err_NIX_OK,
+      "nix_value_incref failed with code {err}"
+    );
+    Value {
+      inner: self.inner,
+      state: self.state,
     }
   }
 }
