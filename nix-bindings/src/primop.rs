@@ -20,7 +20,12 @@
 //! ```no_run
 //! use std::sync::Arc;
 //!
-//! use nix_bindings::{Context, EvalStateBuilder, Store, primop::{PrimOp, NixValueOps}};
+//! use nix_bindings::{
+//!   Context,
+//!   EvalStateBuilder,
+//!   Store,
+//!   primop::{NixValueOps, PrimOp},
+//! };
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let ctx = Arc::new(Context::new()?);
@@ -107,6 +112,7 @@ unsafe extern "C" fn trampoline(
     inner: ret,
     ctx: context,
     state,
+    written: false,
     _phantom: PhantomData,
   };
 
@@ -115,7 +121,13 @@ unsafe extern "C" fn trampoline(
   }));
 
   let err_msg = match result {
-    Ok(Ok(())) => return,
+    Ok(Ok(())) => {
+      if ret_wrapper.written {
+        return;
+      }
+      "primop returned Ok(()) without calling a set_* method on the return slot"
+        .to_string()
+    },
     Ok(Err(e)) => format!("primop error: {e}"),
     Err(payload) => {
       // Try to pull a useful message out of the panic payload before
@@ -188,8 +200,7 @@ pub trait NixValueOps: sealed::NixValueRaw {
   /// Return the [`ValueType`] of this value.
   fn value_type(&self) -> ValueType {
     // SAFETY: ctx and inner are valid for the wrapper's lifetime.
-    let c_type =
-      unsafe { sys::nix_get_type(self.raw_ctx(), self.raw_inner()) };
+    let c_type = unsafe { sys::nix_get_type(self.raw_ctx(), self.raw_inner()) };
     ValueType::from_c(c_type)
   }
 
@@ -445,21 +456,36 @@ impl PrimOpArg<'_> {
 /// The writable return-value slot provided to a primop closure.
 ///
 /// Exactly one `set_*` method must be called before returning `Ok(())`.
+/// The trampoline verifies this at runtime and synthesises a Nix
+/// `EvalError` when the closure returned `Ok(())` without writing the
+/// slot.
 pub struct PrimOpRet<'a> {
   inner:    *mut sys::nix_value,
   ctx:      *mut sys::nix_c_context,
   state:    *mut sys::EvalState,
+  /// Becomes `true` after the closure invokes any `set_*` method.
+  /// Inspected by the trampoline after the closure returns.
+  written:  bool,
   _phantom: PhantomData<&'a mut ()>,
 }
 
 impl<'a> PrimOpRet<'a> {
+  /// Mark the slot as written. Called from every `set_*`/`copy_*` path on
+  /// success so the trampoline can verify the closure actually produced a
+  /// value before returning Ok.
+  fn mark_written(&mut self) {
+    self.written = true;
+  }
+
   /// Write an integer result.
   ///
   /// # Errors
   ///
   /// Returns an error if the write fails.
   pub fn set_int(&mut self, i: i64) -> Result<()> {
-    unsafe { check_err(self.ctx, sys::nix_init_int(self.ctx, self.inner, i)) }
+    unsafe { check_err(self.ctx, sys::nix_init_int(self.ctx, self.inner, i)) }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Write a float result.
@@ -468,7 +494,11 @@ impl<'a> PrimOpRet<'a> {
   ///
   /// Returns an error if the write fails.
   pub fn set_float(&mut self, f: f64) -> Result<()> {
-    unsafe { check_err(self.ctx, sys::nix_init_float(self.ctx, self.inner, f)) }
+    unsafe {
+      check_err(self.ctx, sys::nix_init_float(self.ctx, self.inner, f))
+    }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Write a boolean result.
@@ -477,7 +507,11 @@ impl<'a> PrimOpRet<'a> {
   ///
   /// Returns an error if the write fails.
   pub fn set_bool(&mut self, b: bool) -> Result<()> {
-    unsafe { check_err(self.ctx, sys::nix_init_bool(self.ctx, self.inner, b)) }
+    unsafe {
+      check_err(self.ctx, sys::nix_init_bool(self.ctx, self.inner, b))
+    }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Write a null result.
@@ -486,7 +520,9 @@ impl<'a> PrimOpRet<'a> {
   ///
   /// Returns an error if the write fails.
   pub fn set_null(&mut self) -> Result<()> {
-    unsafe { check_err(self.ctx, sys::nix_init_null(self.ctx, self.inner)) }
+    unsafe { check_err(self.ctx, sys::nix_init_null(self.ctx, self.inner)) }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Write a string result.
@@ -502,7 +538,9 @@ impl<'a> PrimOpRet<'a> {
         self.ctx,
         sys::nix_init_string(self.ctx, self.inner, s_c.as_ptr()),
       )
-    }
+    }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Write a path result.
@@ -535,7 +573,9 @@ impl<'a> PrimOpRet<'a> {
           p_c.as_ptr(),
         ),
       )
-    }
+    }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Type-safe variant of [`set_store_path`](Self::set_store_path).
@@ -595,7 +635,9 @@ impl<'a> PrimOpRet<'a> {
           p_c.as_ptr(),
         ),
       )
-    }
+    }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Copy the value pointed to by `src` into the return slot.
@@ -617,7 +659,9 @@ impl<'a> PrimOpRet<'a> {
   ) -> Result<()> {
     unsafe {
       check_err(self.ctx, sys::nix_copy_value(self.ctx, self.inner, src))
-    }
+    }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Write an attribute set result.
@@ -629,7 +673,10 @@ impl<'a> PrimOpRet<'a> {
   /// # Errors
   ///
   /// Returns an error if construction fails.
-  pub fn set_attrs(&mut self, pairs: &[(&str, &PrimOpValue<'_>)]) -> Result<()> {
+  pub fn set_attrs(
+    &mut self,
+    pairs: &[(&str, &PrimOpValue<'_>)],
+  ) -> Result<()> {
     let builder = unsafe {
       sys::nix_make_bindings_builder(self.ctx, self.state, pairs.len().max(1))
     };
@@ -664,7 +711,9 @@ impl<'a> PrimOpRet<'a> {
     // SAFETY: builder is valid, result slot is valid
     unsafe {
       check_err(self.ctx, sys::nix_make_attrs(self.ctx, self.inner, builder))
-    }
+    }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Write a list result.
@@ -708,7 +757,9 @@ impl<'a> PrimOpRet<'a> {
 
     unsafe {
       check_err(self.ctx, sys::nix_make_list(self.ctx, builder, self.inner))
-    }
+    }?;
+    self.mark_written();
+    Ok(())
   }
 
   /// Allocate and initialise an integer [`PrimOpValue`].
@@ -1750,5 +1801,35 @@ mod tests {
 
     let result = func.call(&nested).expect("Failed to call primop");
     assert_eq!(result.as_int().unwrap(), 99);
+  }
+
+  #[test]
+  #[serial]
+  fn test_primop_unwritten_slot_is_diagnosed() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store =
+      Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
+    let state = EvalStateBuilder::new(&store)
+      .expect("Failed to create builder")
+      .build()
+      .expect("Failed to build state");
+
+    // Closure deliberately returns Ok(()) without calling any set_* on the
+    // return slot. The trampoline must catch this and produce a Nix-side
+    // eval error.
+    let primop =
+      PrimOp::new(&ctx, "broken_primop", 1, None, |_args, _ret| Ok(()))
+        .expect("Failed to create primop");
+    let func = primop
+      .into_value(&state)
+      .expect("Failed to embed primop as value");
+    let arg = state.make_int(1).expect("Failed to make int");
+    let result = func.call(&arg);
+    assert!(
+      result.is_err(),
+      "Expected an error when the primop returns without writing the slot, \
+       got {:?}",
+      result.map(|v| v.value_type()),
+    );
   }
 }
