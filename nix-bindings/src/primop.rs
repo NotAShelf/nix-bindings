@@ -444,10 +444,19 @@ impl PrimOpRet<'_> {
   /// The path string is interpreted by Nix the same way a `path` literal
   /// would be (e.g. it can be an absolute filesystem path or a store path).
   ///
+  /// # Pure Evaluation
+  ///
+  /// This calls `nix_init_path_string`, which the Nix evaluator rejects for
+  /// absolute paths when running with `--pure-eval`.  It returns
+  /// [`Error::EvalError`](crate::Error::EvalError) in that case.  Check
+  /// [`crate::is_pure_eval`] before calling if your primop needs to behave
+  /// differently in pure mode (e.g. error with a clear message, or return a
+  /// string instead).
+  ///
   /// # Errors
   ///
-  /// Returns an error if `p` contains an interior NUL byte or the write
-  /// fails.
+  /// Returns an error if `p` contains an interior NUL byte, the write fails,
+  /// or Nix is running in pure evaluation mode and `p` is an absolute path.
   pub fn set_path(&mut self, p: &str) -> Result<()> {
     let p_c = CString::new(p)?;
     unsafe {
@@ -648,10 +657,18 @@ impl PrimOpRet<'_> {
 
   /// Allocate and initialise a path [`PrimOpValue`].
   ///
+  /// # Pure Evaluation
+  ///
+  /// This calls `nix_init_path_string`, which the Nix evaluator rejects for
+  /// absolute paths when running with `--pure-eval`.  Check
+  /// [`crate::is_pure_eval`] before calling if your primop needs to behave
+  /// differently in pure mode (e.g. error with a clear message, or use
+  /// [`make_string`](Self::make_string) instead).
+  ///
   /// # Errors
   ///
   /// Returns an error if allocation, string conversion, or initialisation
-  /// fails.
+  /// fails, or Nix is running in pure evaluation mode and `p` is absolute.
   pub fn make_path(&self, p: &str) -> Result<PrimOpValue> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     let p_c = CString::new(p)?;
