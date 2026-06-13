@@ -41,7 +41,7 @@
 //! ```
 
 use std::{
-  ffi::CString,
+  ffi::{CStr, CString},
   marker::PhantomData,
   os::raw::c_void,
   panic::{self, AssertUnwindSafe},
@@ -283,6 +283,42 @@ impl PrimOpArg<'_> {
     Ok(s)
   }
 
+  /// Extract this argument as a filesystem path.
+  ///
+  /// Automatically forces the value if it is a thunk.
+  ///
+  /// The returned string is the path as Nix exposes it (e.g. an absolute
+  /// path or a store path). It is copied out of Nix-owned memory, so the
+  /// `String` outlives the underlying value.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if forcing fails, the resolved value is not a path,
+  /// or the path contains invalid UTF-8.
+  pub fn as_path(&self) -> Result<String> {
+    self.force()?;
+    if self.value_type() != ValueType::Path {
+      return Err(Error::InvalidType {
+        expected: "path",
+        actual:   self.value_type().to_string(),
+      });
+    }
+
+    // SAFETY: ctx and inner are valid; value has been forced and is a Path.
+    let raw = unsafe { sys::nix_get_path_string(self.ctx, self.inner) };
+    if raw.is_null() {
+      return Err(Error::NullPointer);
+    }
+
+    // SAFETY: nix_get_path_string returns a NUL-terminated string valid for
+    // the lifetime of `value`; we copy out before returning.
+    let cstr = unsafe { CStr::from_ptr(raw) };
+    cstr
+      .to_str()
+      .map(str::to_owned)
+      .map_err(|_| Error::Unknown("Invalid UTF-8 in path".into()))
+  }
+
   /// Interpret this argument as an attribute set.
   ///
   /// Automatically forces the value if it is a thunk.
@@ -399,6 +435,30 @@ impl PrimOpRet<'_> {
       check_err(
         self.ctx,
         sys::nix_init_string(self.ctx, self.inner, s_c.as_ptr()),
+      )
+    }
+  }
+
+  /// Write a path result.
+  ///
+  /// The path string is interpreted by Nix the same way a `path` literal
+  /// would be (e.g. it can be an absolute filesystem path or a store path).
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if `p` contains an interior NUL byte or the write
+  /// fails.
+  pub fn set_path(&mut self, p: &str) -> Result<()> {
+    let p_c = CString::new(p)?;
+    unsafe {
+      check_err(
+        self.ctx,
+        sys::nix_init_path_string(
+          self.ctx,
+          self.state,
+          self.inner,
+          p_c.as_ptr(),
+        ),
       )
     }
   }
@@ -585,6 +645,24 @@ impl PrimOpRet<'_> {
     }
     Ok(v)
   }
+
+  /// Allocate and initialise a path [`PrimOpValue`].
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if allocation, string conversion, or initialisation
+  /// fails.
+  pub fn make_path(&self, p: &str) -> Result<PrimOpValue> {
+    let v = PrimOpValue::alloc(self.ctx, self.state)?;
+    let p_c = CString::new(p)?;
+    unsafe {
+      check_err(
+        self.ctx,
+        sys::nix_init_path_string(self.ctx, self.state, v.inner, p_c.as_ptr()),
+      )?;
+    }
+    Ok(v)
+  }
 }
 
 /// An owned Nix value used within a primop callback.
@@ -739,6 +817,39 @@ impl PrimOpValue {
 
     unsafe { sys::nix_realised_string_free(realised_str) };
     Ok(s)
+  }
+
+  /// Extract this value as a filesystem path.
+  ///
+  /// Automatically forces the value if it is a thunk. The returned `String`
+  /// is copied out of Nix-owned memory and outlives the value.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if forcing fails, the resolved value is not a path,
+  /// or the path contains invalid UTF-8.
+  pub fn as_path(&self) -> Result<String> {
+    self.force()?;
+    if self.value_type() != ValueType::Path {
+      return Err(Error::InvalidType {
+        expected: "path",
+        actual:   self.value_type().to_string(),
+      });
+    }
+
+    // SAFETY: ctx and inner are valid; value has been forced and is a Path.
+    let raw = unsafe { sys::nix_get_path_string(self.ctx, self.inner) };
+    if raw.is_null() {
+      return Err(Error::NullPointer);
+    }
+
+    // SAFETY: nix_get_path_string returns a NUL-terminated string valid for
+    // the lifetime of `value`; we copy out before returning.
+    let cstr = unsafe { CStr::from_ptr(raw) };
+    cstr
+      .to_str()
+      .map(str::to_owned)
+      .map_err(|_| Error::Unknown("Invalid UTF-8 in path".into()))
   }
 
   /// Interpret this value as an attribute set.
@@ -1214,6 +1325,44 @@ mod tests {
     let arg = state.make_null().unwrap();
     let result = func.call(&arg).expect("Failed to call primop");
     assert_eq!(result.as_string().unwrap(), "hello from primop");
+  }
+
+  #[test]
+  #[serial]
+  fn test_primop_path_roundtrip() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store =
+      Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
+    let state = EvalStateBuilder::new(&store)
+      .expect("Failed to create builder")
+      .build()
+      .expect("Failed to build state");
+
+    // Read the path arg with as_path, exercise make_path on PrimOpRet, then
+    // write the result back via set_path. This covers all three new methods
+    // in one call.
+    let primop = PrimOp::new(&ctx, "echo_path", 1, None, |args, ret| {
+      let p = args[0].as_path()?;
+      assert_eq!(p, "/tmp/nix-bindings-path-in");
+      // Exercise make_path; we don't actually use the value, just confirm it
+      // round-trips through PrimOpValue::as_path.
+      let v = ret.make_path("/tmp/nix-bindings-path-mid")?;
+      assert_eq!(v.as_path()?, "/tmp/nix-bindings-path-mid");
+      ret.set_path("/tmp/nix-bindings-path-out")
+    })
+    .expect("Failed to create primop");
+
+    let func = primop
+      .into_value(&state)
+      .expect("Failed to embed primop as value");
+
+    let arg = state
+      .make_path("/tmp/nix-bindings-path-in")
+      .expect("make_path failed");
+    let result = func.call(&arg).expect("Failed to call primop");
+    assert_eq!(result.value_type(), ValueType::Path);
+    let out = result.as_path().expect("Value::as_path failed");
+    assert_eq!(out.to_str(), Some("/tmp/nix-bindings-path-out"));
   }
 
   #[test]
