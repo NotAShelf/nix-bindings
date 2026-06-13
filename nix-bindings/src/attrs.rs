@@ -33,15 +33,35 @@ impl Value<'_> {
       )
     };
 
-    if attr_ptr.is_null() {
-      return Err(Error::KeyNotFound(key.to_string()));
+    match NonNull::new(attr_ptr) {
+      Some(inner) => Ok(Value {
+        inner,
+        state: self.state,
+      }),
+      None => {
+        // Distinguish missing-key (no error on context) from an actual API
+        // failure that parked a message on the context.
+        let ptr = unsafe {
+          crate::sys::nix_err_msg(
+            std::ptr::null_mut(),
+            self.state.context.as_ptr(),
+            std::ptr::null_mut(),
+          )
+        };
+        if ptr.is_null() {
+          Err(Error::KeyNotFound(key.to_string()))
+        } else {
+          let msg = unsafe {
+            std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
+          };
+          if msg.is_empty() {
+            Err(Error::KeyNotFound(key.to_string()))
+          } else {
+            Err(Error::Unknown(msg))
+          }
+        }
+      },
     }
-
-    let inner = NonNull::new(attr_ptr).ok_or(Error::NullPointer)?;
-    Ok(Value {
-      inner,
-      state: self.state,
-    })
   }
 
   /// Get all attribute keys.
@@ -96,11 +116,12 @@ impl Value<'_> {
       }
 
       // SAFETY: name_ptr is a valid C string owned by the EvalState
-      let name = unsafe {
-        std::ffi::CStr::from_ptr(name_ptr)
-          .to_string_lossy()
-          .into_owned()
-      };
+      let name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }
+        .to_str()
+        .map_err(|_| {
+          Error::Unknown("Attribute name was not valid UTF-8".to_string())
+        })?
+        .to_owned();
       keys.push(name);
     }
 
@@ -223,10 +244,19 @@ impl<'a> Iterator for AttrIterator<'a> {
     }
 
     // SAFETY: name_ptr is a valid C string owned by the EvalState
-    let name = unsafe {
-      std::ffi::CStr::from_ptr(name_ptr)
-        .to_string_lossy()
-        .into_owned()
+    let name = match unsafe { std::ffi::CStr::from_ptr(name_ptr) }.to_str() {
+      Ok(s) => s.to_owned(),
+      Err(_) => {
+        unsafe {
+          crate::sys::nix_value_decref(
+            self.value.state.context.as_ptr(),
+            attr_ptr,
+          );
+        }
+        return Some(Err(Error::Unknown(
+          "Attribute name was not valid UTF-8".to_string(),
+        )));
+      },
     };
 
     // SAFETY: attr_ptr is non-null, verified above

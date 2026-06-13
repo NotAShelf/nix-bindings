@@ -164,15 +164,27 @@ impl<'a> Iterator for ListIterator<'a> {
       return None;
     }
 
-    match self.value.list_get(self.index) {
-      Ok(value) => {
-        self.index += 1;
-        Some(Ok(value))
-      },
-      Err(e) => {
-        self.index += 1;
-        Some(Err(e))
-      },
+    let idx = self.index;
+    self.index += 1;
+
+    // Bypass list_get's redundant type+length check; we already know the
+    // value is a list and idx < length.
+    // SAFETY: context, value, and state are valid; idx is bounds-checked.
+    let elem_ptr = unsafe {
+      sys::nix_get_list_byidx(
+        self.value.state.context.as_ptr(),
+        self.value.inner.as_ptr(),
+        self.value.state.as_ptr(),
+        idx as std::os::raw::c_uint,
+      )
+    };
+
+    match NonNull::new(elem_ptr) {
+      Some(inner) => Some(Ok(Value {
+        inner,
+        state: self.value.state,
+      })),
+      None => Some(Err(Error::NullPointer)),
     }
   }
 
