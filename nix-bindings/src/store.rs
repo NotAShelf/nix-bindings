@@ -1,10 +1,49 @@
 use std::{
   ffi::{CStr, CString},
+  fmt,
+  panic::{self, AssertUnwindSafe},
   ptr::NonNull,
   sync::Arc,
 };
 
 use super::{Context, Error, Result, check_err, string_from_callback, sys};
+
+/// Options for [`Store::copy_path`].
+///
+/// Default: no repair, signature checks enforced.
+#[derive(Debug, Clone, Copy)]
+pub struct CopyPathOptions {
+  /// Repair the destination path if it is corrupted.
+  pub repair:     bool,
+  /// Verify the path's signatures before copying.
+  pub check_sigs: bool,
+}
+
+impl Default for CopyPathOptions {
+  fn default() -> Self {
+    CopyPathOptions {
+      repair:     false,
+      check_sigs: true,
+    }
+  }
+}
+
+/// Convert a null pointer + the context's last error into an [`Error`].
+///
+/// Used in C APIs that signal failure by returning null and parking the
+/// real message on the context. Without this the user only sees
+/// `Error::NullPointer` and loses the diagnostic.
+unsafe fn null_or_context_err(ctx: &Context, fallback: Error) -> Error {
+  unsafe {
+    let ptr =
+      sys::nix_err_msg(std::ptr::null_mut(), ctx.as_ptr(), std::ptr::null_mut());
+    if ptr.is_null() {
+      return fallback;
+    }
+    let msg = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+    if msg.is_empty() { fallback } else { Error::Unknown(msg) }
+  }
+}
 
 /// Nix store for managing packages and derivations.
 ///
@@ -60,7 +99,10 @@ impl StorePath {
       )
     };
 
-    let inner = NonNull::new(path_ptr).ok_or(Error::NullPointer)?;
+    let inner = match NonNull::new(path_ptr) {
+      Some(p) => p,
+      None => return Err(unsafe { null_or_context_err(context, Error::NullPointer) }),
+    };
 
     Ok(StorePath {
       inner,
@@ -195,6 +237,22 @@ impl Drop for StorePath {
 unsafe impl Send for StorePath {}
 unsafe impl Sync for StorePath {}
 
+impl fmt::Debug for StorePath {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let name = self.name().unwrap_or_else(|_| "<unknown>".into());
+    write!(f, "StorePath({name})")
+  }
+}
+
+impl fmt::Display for StorePath {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self.name() {
+      Ok(n) => write!(f, "{n}"),
+      Err(_) => write!(f, "<store-path>"),
+    }
+  }
+}
+
 impl Derivation {
   /// Parse a derivation from its JSON representation.
   ///
@@ -224,7 +282,7 @@ impl Derivation {
     };
 
     if drv_ptr.is_null() {
-      return Err(Error::NullPointer);
+      return Err(unsafe { null_or_context_err(context, Error::NullPointer) });
     }
 
     Ok(Derivation {
@@ -280,7 +338,7 @@ impl Derivation {
     };
 
     if drv_ptr.is_null() {
-      return Err(Error::NullPointer);
+      return Err(unsafe { null_or_context_err(context, Error::NullPointer) });
     }
 
     Ok(Derivation {
@@ -313,10 +371,13 @@ impl Clone for Derivation {
   fn clone(&self) -> Self {
     // SAFETY: self.inner is valid
     let cloned_ptr = unsafe { sys::nix_derivation_clone(self.inner) };
-    let inner = cloned_ptr; // raw pointer, Drop will free
+    assert!(
+      !cloned_ptr.is_null(),
+      "nix_derivation_clone returned null for a valid derivation"
+    );
 
     Derivation {
-      inner,
+      inner:    cloned_ptr,
       _context: Arc::clone(&self._context),
     }
   }
@@ -335,6 +396,12 @@ impl Drop for Derivation {
 unsafe impl Send for Derivation {}
 unsafe impl Sync for Derivation {}
 
+impl fmt::Debug for Derivation {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("Derivation").finish_non_exhaustive()
+  }
+}
+
 impl Store {
   /// Open a Nix store.
   ///
@@ -347,6 +414,26 @@ impl Store {
   ///
   /// Returns an error if the store cannot be opened.
   pub fn open(context: &Arc<Context>, uri: Option<&str>) -> Result<Self> {
+    Self::open_with_params::<&str, &str>(context, uri, &[])
+  }
+
+  /// Open a Nix store with additional store parameters.
+  ///
+  /// Equivalent to passing `?key1=value1&key2=value2` in the URI. Useful for
+  /// configuring daemon connections, signing keys, or cache options.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the store cannot be opened.
+  pub fn open_with_params<K, V>(
+    context: &Arc<Context>,
+    uri: Option<&str>,
+    params: &[(K, V)],
+  ) -> Result<Self>
+  where
+    K: AsRef<str>,
+    V: AsRef<str>,
+  {
     let uri_cstring;
     let uri_ptr = if let Some(uri) = uri {
       uri_cstring = CString::new(uri)?;
@@ -355,12 +442,49 @@ impl Store {
       std::ptr::null()
     };
 
-    // SAFETY: context is valid; uri_ptr is either null or a valid CString
-    let store_ptr = unsafe {
-      sys::nix_store_open(context.as_ptr(), uri_ptr, std::ptr::null_mut())
+    // Build the params structure. Each inner pair is a 3-slot array
+    // [key, value, NULL]; the outer array of pair-pointers is NULL-terminated.
+    // We must keep the backing CStrings alive across the call.
+    let key_vals: Vec<(CString, CString)> = params
+      .iter()
+      .map(|(k, v)| {
+        Ok((CString::new(k.as_ref())?, CString::new(v.as_ref())?))
+      })
+      .collect::<Result<_>>()?;
+
+    let mut inner_arrays: Vec<[*const std::os::raw::c_char; 3]> = key_vals
+      .iter()
+      .map(|(k, v)| [k.as_ptr(), v.as_ptr(), std::ptr::null()])
+      .collect();
+
+    let mut outer: Vec<*mut *const std::os::raw::c_char> = inner_arrays
+      .iter_mut()
+      .map(|arr| arr.as_mut_ptr())
+      .collect();
+    outer.push(std::ptr::null_mut());
+
+    let params_ptr = if params.is_empty() {
+      std::ptr::null_mut()
+    } else {
+      outer.as_mut_ptr()
     };
 
-    let inner = NonNull::new(store_ptr).ok_or(Error::NullPointer)?;
+    // SAFETY: context valid; uri_ptr is null or a valid CString; params_ptr
+    // is null (no params) or a properly null-terminated array of
+    // null-terminated key/value pairs kept alive by `key_vals` and
+    // `inner_arrays` until the call returns.
+    let store_ptr = unsafe {
+      sys::nix_store_open(context.as_ptr(), uri_ptr, params_ptr)
+    };
+
+    drop(outer);
+    drop(inner_arrays);
+    drop(key_vals);
+
+    let inner = match NonNull::new(store_ptr) {
+      Some(p) => p,
+      None => return Err(unsafe { null_or_context_err(context, Error::NullPointer) }),
+    };
 
     Ok(Store {
       inner,
@@ -393,25 +517,27 @@ impl Store {
       outname: *const std::os::raw::c_char,
       out: *const sys::StorePath,
     ) {
-      let data = unsafe { &mut *(userdata as *mut Userdata) };
-      let (outputs, context) = data;
+      let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        let data = unsafe { &mut *(userdata as *mut Userdata) };
+        let (outputs, context) = data;
 
-      let name = if !outname.is_null() {
-        unsafe { CStr::from_ptr(outname).to_string_lossy().into_owned() }
-      } else {
-        String::from("out")
-      };
+        let name = if !outname.is_null() {
+          unsafe { CStr::from_ptr(outname).to_string_lossy().into_owned() }
+        } else {
+          String::from("out")
+        };
 
-      if !out.is_null() {
-        let cloned_path =
-          unsafe { sys::nix_store_path_clone(out as *mut sys::StorePath) };
-        if let Some(inner) = NonNull::new(cloned_path) {
-          outputs.push((name, StorePath {
-            inner,
-            _context: Arc::clone(context),
-          }));
+        if !out.is_null() {
+          let cloned_path =
+            unsafe { sys::nix_store_path_clone(out as *mut sys::StorePath) };
+          if let Some(inner) = NonNull::new(cloned_path) {
+            outputs.push((name, StorePath {
+              inner,
+              _context: Arc::clone(context),
+            }));
+          }
         }
-      }
+      }));
     }
 
     let mut userdata: Userdata = (Vec::new(), Arc::clone(&self._context));
@@ -586,11 +712,6 @@ impl Store {
   /// Unlike [`copy_closure`](Self::copy_closure), this copies only the
   /// path itself, not its dependencies.
   ///
-  /// # Arguments
-  ///
-  /// * `repair` - Whether to repair the path if it is corrupted.
-  /// * `check_sigs` - Whether to verify path signatures before copying.
-  ///
   /// # Errors
   ///
   /// Returns an error if the copy operation fails.
@@ -598,8 +719,7 @@ impl Store {
     &self,
     dst_store: &Store,
     path: &StorePath,
-    repair: bool,
-    check_sigs: bool,
+    options: CopyPathOptions,
   ) -> Result<()> {
     // SAFETY: all pointers are valid
     let err = unsafe {
@@ -608,8 +728,8 @@ impl Store {
         self.inner.as_ptr(),
         dst_store.as_ptr(),
         path.inner.as_ptr(),
-        repair,
-        check_sigs,
+        options.repair,
+        options.check_sigs,
       )
     };
     check_err(unsafe { self._context.as_ptr() }, err)
@@ -650,19 +770,21 @@ impl Store {
       userdata: *mut std::os::raw::c_void,
       sp: *const sys::StorePath,
     ) {
-      let data = unsafe { &mut *(userdata as *mut Userdata<'_>) };
-      let (cb, ctx) = data;
+      let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        let data = unsafe { &mut *(userdata as *mut Userdata<'_>) };
+        let (cb, ctx) = data;
 
-      if !sp.is_null() {
-        let cloned = unsafe { sys::nix_store_path_clone(sp as *mut _) };
-        if let Some(inner) = NonNull::new(cloned) {
-          let p = StorePath {
-            inner,
-            _context: Arc::clone(ctx),
-          };
-          cb(&p);
+        if !sp.is_null() {
+          let cloned = unsafe { sys::nix_store_path_clone(sp as *mut _) };
+          if let Some(inner) = NonNull::new(cloned) {
+            let p = StorePath {
+              inner,
+              _context: Arc::clone(ctx),
+            };
+            cb(&p);
+          }
         }
-      }
+      }));
     }
 
     let mut userdata: Userdata<'_> =
@@ -684,6 +806,44 @@ impl Store {
       )
     };
     check_err(unsafe { self._context.as_ptr() }, err)
+  }
+
+  /// Collect the filesystem closure into a `Vec<StorePath>`.
+  ///
+  /// Convenience wrapper around [`get_fs_closure`](Self::get_fs_closure) that
+  /// gathers every visited path into a vector. Use the callback form directly
+  /// if you want to stream paths without allocating the full closure.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the operation fails.
+  pub fn collect_fs_closure(
+    &self,
+    path: &StorePath,
+    flip_direction: bool,
+    include_outputs: bool,
+    include_derivers: bool,
+  ) -> Result<Vec<StorePath>> {
+    let mut out = Vec::new();
+    self.get_fs_closure(
+      path,
+      flip_direction,
+      include_outputs,
+      include_derivers,
+      |p| out.push(p.clone()),
+    )?;
+    Ok(out)
+  }
+
+  /// Read a derivation from this store by its store path.
+  ///
+  /// Convenience wrapper around [`Derivation::from_store_path`].
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the derivation cannot be read.
+  pub fn read_derivation(&self, path: &StorePath) -> Result<Derivation> {
+    Derivation::from_store_path(&self._context, self, path)
   }
 
   /// Look up the full store path from a hash part.
@@ -796,6 +956,13 @@ impl Drop for Store {
 // SAFETY: Store can be shared between threads
 unsafe impl Send for Store {}
 unsafe impl Sync for Store {}
+
+impl fmt::Debug for Store {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let uri = self.uri().unwrap_or_else(|_| "<unknown>".into());
+    f.debug_struct("Store").field("uri", &uri).finish()
+  }
+}
 
 #[cfg(test)]
 mod tests {
