@@ -120,12 +120,14 @@ fn main() {
     }
 
     if env::var("CARGO_FEATURE_EXPR").is_ok() {
-      for pc in ["nix-expr", "nix-expr-c"] {
-        let lib = pkg_config::probe_library(pc)
-          .unwrap_or_else(|_| panic!("Unable to find .pc file for {pc}"));
-        for path in &lib.include_paths {
-          cc_build.include(path);
-        }
+      // Only probe the C API package. nix-expr.pc (C++) pulls in transitive
+      // deps (gc, boost, ...) that downstream builds may not expose. The C++
+      // include root is already covered by the nix-store/nix-util includes
+      // above; nix-expr-c supplies the internal C API headers we actually need.
+      let lib = pkg_config::probe_library("nix-expr-c")
+        .unwrap_or_else(|_| panic!("Unable to find .pc file for nix-expr-c"));
+      for path in &lib.include_paths {
+        cc_build.include(path);
       }
     }
 
