@@ -92,26 +92,18 @@ impl Value<'_> {
     let mut keys = Vec::with_capacity(count as usize);
 
     for i in 0..count {
-      // SAFETY: context, value, and state are valid; index is in bounds
-      let mut name_ptr: *const std::os::raw::c_char = std::ptr::null();
-      // nix_get_attr_byidx also returns an owned value pointer; we don't
-      // need the value here, but we must decref it to avoid a leak.
-      let val_ptr = unsafe {
-        crate::sys::nix_get_attr_byidx(
+      // nix_get_attr_name_byidx returns the name only. No GC ref on a
+      // value side, no thunk forcing. Use it instead of nix_get_attr_byidx
+      // which would alloc-and-decref a value we'd immediately discard.
+      // SAFETY: context, value, and state are valid; index is in bounds.
+      let name_ptr = unsafe {
+        crate::sys::nix_get_attr_name_byidx(
           self.state.context.as_ptr(),
           self.inner.as_ptr(),
           self.state.as_ptr(),
           i,
-          &mut name_ptr,
         )
       };
-
-      // Decref the returned value since we only want the name here.
-      if !val_ptr.is_null() {
-        unsafe {
-          crate::sys::nix_value_decref(self.state.context.as_ptr(), val_ptr);
-        }
-      }
 
       if name_ptr.is_null() {
         continue;
@@ -216,12 +208,13 @@ impl<'a> Iterator for AttrIterator<'a> {
     let idx = self.index;
     self.index += 1;
 
-    // SAFETY: context, value, and state are valid; index is in bounds
-    // nix_get_attr_byidx returns an owned (GC-reffed) pointer; Value's
-    // Drop will release it.
+    // SAFETY: context, value, and state are valid; index is in bounds.
+    // nix_get_attr_byidx_lazy yields a GC-reffed pointer without forcing
+    // the thunk; callers force on demand via the as_* accessors. Value's
+    // Drop releases the ref.
     let mut name_ptr: *const std::os::raw::c_char = std::ptr::null();
     let attr_ptr = unsafe {
-      crate::sys::nix_get_attr_byidx(
+      crate::sys::nix_get_attr_byidx_lazy(
         self.value.state.context.as_ptr(),
         self.value.inner.as_ptr(),
         self.value.state.as_ptr(),

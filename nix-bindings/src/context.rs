@@ -9,7 +9,8 @@ use std::{
 };
 
 use crate::{
-  Error, Result,
+  Error,
+  Result,
   error::{check_err, string_from_callback},
   sys,
 };

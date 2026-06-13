@@ -47,7 +47,7 @@
 
 use std::{
   collections::HashSet,
-  ffi::{CStr, CString},
+  ffi::CString,
   marker::PhantomData,
   os::raw::c_void,
   panic::{self, AssertUnwindSafe},
@@ -167,196 +167,11 @@ unsafe extern "C" fn drop_closure_finalizer(
   let _ = unsafe { Box::from_raw(cd as *mut ClosureData) };
 }
 
-/// Sealing trait that exposes the raw pointer triple of a Nix-value
-/// wrapper. Implemented by [`PrimOpArg`] and [`PrimOpValue`] so the
-/// shared accessor methods on [`NixValueOps`] can run their FFI calls.
-///
-/// This is intentionally not part of the public API surface (the trait
-/// itself is `pub` in a private module): users should call the
-/// [`NixValueOps`] methods, not the raw accessors.
-mod sealed {
-  use super::sys;
-
-  pub trait NixValueRaw {
-    fn raw_ctx(&self) -> *mut sys::nix_c_context;
-    fn raw_state(&self) -> *mut sys::EvalState;
-    fn raw_inner(&self) -> *mut sys::nix_value;
-  }
-}
-
-/// Read access to a Nix value inside a primop callback.
-///
-/// Implemented by both [`PrimOpArg`] (borrowed primop argument) and
-/// [`PrimOpValue`] (owned child value extracted from an attribute set
-/// or list). All methods that previously appeared twice on the two
-/// concrete types now live here as default trait methods.
-///
-/// Bring this trait into scope to call `as_int`, `as_string`, etc:
-///
-/// ```ignore
-/// use nix_bindings::primop::NixValueOps;
-/// ```
-pub trait NixValueOps: sealed::NixValueRaw {
-  /// Return the [`ValueType`] of this value.
-  fn value_type(&self) -> ValueType {
-    // SAFETY: ctx and inner are valid for the wrapper's lifetime.
-    let c_type = unsafe { sys::nix_get_type(self.raw_ctx(), self.raw_inner()) };
-    ValueType::from_c(c_type)
-  }
-
-  /// Force evaluation (resolves thunks).
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if evaluation fails.
-  fn force(&self) -> Result<()> {
-    // SAFETY: ctx, state, and inner are valid for the wrapper's lifetime.
-    unsafe {
-      check_err(
-        self.raw_ctx(),
-        sys::nix_value_force(
-          self.raw_ctx(),
-          self.raw_state(),
-          self.raw_inner(),
-        ),
-      )
-    }
-  }
-
-  /// Extract as an integer.  Forces the value first.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails or the resolved value is not an
-  /// integer.
-  fn as_int(&self) -> Result<i64> {
-    self.force()?;
-    if self.value_type() != ValueType::Int {
-      return Err(Error::InvalidType {
-        expected: "int",
-        actual:   self.value_type().to_string(),
-      });
-    }
-    // SAFETY: type checked.
-    Ok(unsafe { sys::nix_get_int(self.raw_ctx(), self.raw_inner()) })
-  }
-
-  /// Extract as a float.  Forces the value first.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails or the resolved value is not a
-  /// float.
-  fn as_float(&self) -> Result<f64> {
-    self.force()?;
-    if self.value_type() != ValueType::Float {
-      return Err(Error::InvalidType {
-        expected: "float",
-        actual:   self.value_type().to_string(),
-      });
-    }
-    // SAFETY: type checked.
-    Ok(unsafe { sys::nix_get_float(self.raw_ctx(), self.raw_inner()) })
-  }
-
-  /// Extract as a boolean.  Forces the value first.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails or the resolved value is not a
-  /// boolean.
-  fn as_bool(&self) -> Result<bool> {
-    self.force()?;
-    if self.value_type() != ValueType::Bool {
-      return Err(Error::InvalidType {
-        expected: "bool",
-        actual:   self.value_type().to_string(),
-      });
-    }
-    // SAFETY: type checked.
-    Ok(unsafe { sys::nix_get_bool(self.raw_ctx(), self.raw_inner()) })
-  }
-
-  /// Extract as a UTF-8 string, realising any string context.  Forces
-  /// the value first.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails, the resolved value is not a
-  /// string, or the string contains invalid UTF-8.
-  fn as_string(&self) -> Result<String> {
-    self.force()?;
-    if self.value_type() != ValueType::String {
-      return Err(Error::InvalidType {
-        expected: "string",
-        actual:   self.value_type().to_string(),
-      });
-    }
-
-    // SAFETY: type checked.
-    let realised_str = unsafe {
-      sys::nix_string_realise(
-        self.raw_ctx(),
-        self.raw_state(),
-        self.raw_inner(),
-        false,
-      )
-    };
-
-    if realised_str.is_null() {
-      return Err(Error::NullPointer);
-    }
-
-    let buffer_start =
-      unsafe { sys::nix_realised_string_get_buffer_start(realised_str) };
-    let buffer_size =
-      unsafe { sys::nix_realised_string_get_buffer_size(realised_str) };
-
-    if buffer_start.is_null() {
-      unsafe { sys::nix_realised_string_free(realised_str) };
-      return Err(Error::NullPointer);
-    }
-
-    let bytes = unsafe {
-      std::slice::from_raw_parts(buffer_start.cast::<u8>(), buffer_size)
-    };
-    let s = std::str::from_utf8(bytes)
-      .map_err(|_| Error::Unknown("Invalid UTF-8 in string".into()))?
-      .to_owned();
-
-    unsafe { sys::nix_realised_string_free(realised_str) };
-    Ok(s)
-  }
-
-  /// Extract as a filesystem-path string.  Forces the value first.
-  ///
-  /// # Errors
-  ///
-  /// Returns an error if forcing fails, the resolved value is not a
-  /// path, or the path contains invalid UTF-8.
-  fn as_path(&self) -> Result<String> {
-    self.force()?;
-    if self.value_type() != ValueType::Path {
-      return Err(Error::InvalidType {
-        expected: "path",
-        actual:   self.value_type().to_string(),
-      });
-    }
-    // SAFETY: type checked; pointer outlives the copy.
-    let raw =
-      unsafe { sys::nix_get_path_string(self.raw_ctx(), self.raw_inner()) };
-    if raw.is_null() {
-      return Err(Error::NullPointer);
-    }
-    let cstr = unsafe { CStr::from_ptr(raw) };
-    cstr
-      .to_str()
-      .map(str::to_owned)
-      .map_err(|_| Error::Unknown("Invalid UTF-8 in path".into()))
-  }
-}
-
-impl<T: sealed::NixValueRaw> NixValueOps for T {}
+// The shared value-access trait lives at the crate root as
+// `NixValueOps` (see `crate::value_ops`). Re-exported here for backwards
+// compatibility with `use nix_bindings::primop::NixValueOps`.
+pub use crate::value_ops::NixValueOps;
+use crate::value_ops::NixValueRaw;
 
 /// A borrowed Nix value passed as an argument to a primop callback.
 ///
@@ -377,7 +192,7 @@ pub struct PrimOpArg<'a> {
 // argument into a thread that outlives the call and dereference a
 // dangling context.
 
-impl sealed::NixValueRaw for PrimOpArg<'_> {
+impl NixValueRaw for PrimOpArg<'_> {
   fn raw_ctx(&self) -> *mut sys::nix_c_context {
     self.ctx
   }
@@ -935,7 +750,7 @@ pub struct PrimOpValue<'a> {
 // auto-trait. The wrapper must not outlive the trampoline frame: doing
 // so would dereference a dangling `EvalState*` on the next force/decref.
 
-impl sealed::NixValueRaw for PrimOpValue<'_> {
+impl NixValueRaw for PrimOpValue<'_> {
   fn raw_ctx(&self) -> *mut sys::nix_c_context {
     self.ctx
   }
@@ -1102,20 +917,10 @@ impl<'a> ArgAttrs<'a> {
 
     let mut keys = Vec::with_capacity(count as usize);
     for i in 0..count {
-      let mut name_ptr: *const std::os::raw::c_char = std::ptr::null();
-      let val_ptr = unsafe {
-        sys::nix_get_attr_byidx(
-          self.ctx,
-          self.inner,
-          self.state,
-          i,
-          &mut name_ptr,
-        )
+      // Use the name-only API to avoid alloc/decref of an unused value.
+      let name_ptr = unsafe {
+        sys::nix_get_attr_name_byidx(self.ctx, self.inner, self.state, i)
       };
-      // We only want the name; release the value reference.
-      if !val_ptr.is_null() {
-        unsafe { sys::nix_value_decref(self.ctx, val_ptr) };
-      }
       if name_ptr.is_null() {
         continue;
       }

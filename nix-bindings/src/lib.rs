@@ -128,7 +128,6 @@ pub mod sys {
 
 mod error;
 pub use error::{Error, Result};
-
 // Crate-internal re-exports so the legacy `crate::check_err` /
 // `crate::string_from_callback` paths in the module bodies keep working
 // without each module having to update its imports.
@@ -151,10 +150,8 @@ pub use store::{Derivation, Store, StorePath};
 
 #[cfg(feature = "expr")]
 pub use eval::{EvalState, EvalStateBuilder};
-#[cfg(feature = "expr")]
-pub use value::{Value, ValueType};
-#[cfg(feature = "expr")]
-pub use value_ops::NixValueOps;
+#[cfg(feature = "expr")] pub use value::{Value, ValueType};
+#[cfg(feature = "expr")] pub use value_ops::NixValueOps;
 
 #[cfg(feature = "external")] pub mod external;
 #[cfg(feature = "flake")] pub mod flake;
@@ -162,14 +159,11 @@ pub use value_ops::NixValueOps;
 
 #[cfg(all(test, any(feature = "store", feature = "expr")))]
 mod tests {
-  #[cfg(feature = "expr")]
-  use std::sync::Arc;
+  #[cfg(feature = "expr")] use std::sync::Arc;
 
-  #[cfg(feature = "expr")]
-  use serial_test::serial;
+  #[cfg(feature = "expr")] use serial_test::serial;
 
-  #[cfg(feature = "store")]
-  use super::*;
+  #[cfg(feature = "store")] use super::*;
 
   #[cfg(feature = "store")]
   #[test]
