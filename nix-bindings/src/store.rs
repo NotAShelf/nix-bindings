@@ -261,6 +261,13 @@ impl fmt::Debug for StorePath {
   }
 }
 
+/// Renders the **name component only** (e.g. `hello-1.0`), not the canonical
+/// `/nix/store/<hash>-<name>` string.
+///
+/// The Nix C API does not expose a store-directory-aware print function;
+/// without a [`Store`] handle there is no way to recover the full path. Use
+/// [`Store::print_path`] (requires the `shim` feature) when you need the
+/// canonical form.
 impl fmt::Display for StorePath {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self.name() {
@@ -313,7 +320,7 @@ impl Derivation {
   /// # Errors
   ///
   /// Returns an error if the derivation cannot be registered in the store.
-  pub fn add_to_store(&mut self, store: &Store) -> Result<StorePath> {
+  pub fn add_to_store(&self, store: &Store) -> Result<StorePath> {
     // SAFETY: context, store, and inner are valid
     let path_ptr = unsafe {
       sys::nix_add_derivation(
