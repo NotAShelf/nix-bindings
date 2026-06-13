@@ -448,10 +448,11 @@ impl PrimOpRet<'_> {
   ///
   /// This calls `nix_init_path_string`, which the Nix evaluator rejects for
   /// absolute paths when running with `--pure-eval`.  It returns
-  /// [`Error::EvalError`](crate::Error::EvalError) in that case.  Check
-  /// [`crate::is_pure_eval`] before calling if your primop needs to behave
-  /// differently in pure mode (e.g. error with a clear message, or return a
-  /// string instead).
+  /// [`Error::EvalError`](crate::Error::EvalError) in that case.  If the path
+  /// is a store path your primop already added to the store, use
+  /// [`set_store_path`](Self::set_store_path) (requires the `shim` feature)
+  /// instead; it registers the path with the evaluator's allowlist so the
+  /// value is usable in pure mode.
   ///
   /// # Errors
   ///
@@ -460,6 +461,43 @@ impl PrimOpRet<'_> {
   pub fn set_path(&mut self, p: &str) -> Result<()> {
     let p_c = CString::new(p)?;
     unsafe {
+      check_err(
+        self.ctx,
+        sys::nix_init_path_string(
+          self.ctx,
+          self.state,
+          self.inner,
+          p_c.as_ptr(),
+        ),
+      )
+    }
+  }
+
+  /// Write a store path as a Nix path value, registering it as accessible
+  /// in the evaluator's allowlist first.
+  ///
+  /// In pure evaluation mode (`--pure-eval`) Nix wraps the filesystem in an
+  /// `AllowListSourceAccessor` that rejects any path not explicitly permitted.
+  /// This method calls `EvalState::allowPath` before writing the value,
+  /// mirroring what Nix's own fetch builtins do after adding a path to the
+  /// store.  The resulting path value is usable (e.g. as `src` in a
+  /// derivation) without triggering the access restriction.
+  ///
+  /// The caller must ensure `p` is a canonical store path that already exists
+  /// in the store.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if `p` contains an interior NUL byte, is not a valid
+  /// store path, or the write fails.
+  #[cfg(feature = "shim")]
+  pub fn set_store_path(&mut self, p: &str) -> Result<()> {
+    let p_c = CString::new(p)?;
+    unsafe {
+      check_err(
+        self.ctx,
+        sys::nix_eval_state_allow_path(self.ctx, self.state, p_c.as_ptr()),
+      )?;
       check_err(
         self.ctx,
         sys::nix_init_path_string(
@@ -660,10 +698,11 @@ impl PrimOpRet<'_> {
   /// # Pure Evaluation
   ///
   /// This calls `nix_init_path_string`, which the Nix evaluator rejects for
-  /// absolute paths when running with `--pure-eval`.  Check
-  /// [`crate::is_pure_eval`] before calling if your primop needs to behave
-  /// differently in pure mode (e.g. error with a clear message, or use
-  /// [`make_string`](Self::make_string) instead).
+  /// absolute paths when running with `--pure-eval`.  If the path is a store
+  /// path your primop already added to the store, use
+  /// [`make_store_path`](Self::make_store_path) (requires the `shim` feature)
+  /// instead; it registers the path with the evaluator's allowlist so the
+  /// value is usable in pure mode.
   ///
   /// # Errors
   ///
@@ -673,6 +712,38 @@ impl PrimOpRet<'_> {
     let v = PrimOpValue::alloc(self.ctx, self.state)?;
     let p_c = CString::new(p)?;
     unsafe {
+      check_err(
+        self.ctx,
+        sys::nix_init_path_string(self.ctx, self.state, v.inner, p_c.as_ptr()),
+      )?;
+    }
+    Ok(v)
+  }
+
+  /// Allocate and initialise a store path [`PrimOpValue`], registering it as
+  /// accessible in the evaluator's allowlist first.
+  ///
+  /// Equivalent to [`set_store_path`](Self::set_store_path) but allocates and
+  /// returns a new [`PrimOpValue`] instead of writing into the return slot.
+  /// See [`set_store_path`](Self::set_store_path) for the full description of
+  /// the allowlist mechanism.
+  ///
+  /// The caller must ensure `p` is a canonical store path that already exists
+  /// in the store.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if allocation, string conversion, `p` is not a valid
+  /// store path, or initialisation fails.
+  #[cfg(feature = "shim")]
+  pub fn make_store_path(&self, p: &str) -> Result<PrimOpValue> {
+    let v = PrimOpValue::alloc(self.ctx, self.state)?;
+    let p_c = CString::new(p)?;
+    unsafe {
+      check_err(
+        self.ctx,
+        sys::nix_eval_state_allow_path(self.ctx, self.state, p_c.as_ptr()),
+      )?;
       check_err(
         self.ctx,
         sys::nix_init_path_string(self.ctx, self.state, v.inner, p_c.as_ptr()),

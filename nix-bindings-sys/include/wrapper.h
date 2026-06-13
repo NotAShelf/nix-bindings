@@ -27,3 +27,7 @@
 #ifdef FEATURE_SHIM
 #include "nix_api_store_text.h"
 #endif
+
+#if defined(FEATURE_SHIM) && defined(FEATURE_EXPR)
+#include "nix_api_expr_shim.h"
+#endif
