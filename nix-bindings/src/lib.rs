@@ -831,14 +831,18 @@ impl EvalState {
   ///
   /// # Pure Evaluation
   ///
-  /// This calls `nix_init_path_string`, which the Nix evaluator rejects for
-  /// absolute paths when running with `--pure-eval`.  Check [`is_pure_eval`]
-  /// before calling if your code must work in both modes.
+  /// In pure-eval mode (`--pure-eval`) the Nix evaluator wraps the
+  /// filesystem in an `AllowListSourceAccessor` that rejects any
+  /// unregistered absolute path. When the `shim` feature is enabled this
+  /// method automatically registers absolute paths via the shim's
+  /// `nix_eval_state_allow_path` before constructing the value, mirroring
+  /// what Nix's own fetch builtins do. Without `shim` you must arrange
+  /// for allowPath yourself, or [`is_pure_eval`] returns true.
   ///
   /// # Errors
   ///
-  /// Returns an error if value allocation, path conversion, initialization
-  /// fails, or Nix is running in pure evaluation mode and `path` is absolute.
+  /// Returns an error if value allocation, path conversion, or
+  /// initialization fails.
   pub fn make_path(&self, path: impl AsRef<Path>) -> Result<Value<'_>> {
     let v = self.alloc_value()?;
     let path_str = path
@@ -846,6 +850,31 @@ impl EvalState {
       .to_str()
       .ok_or_else(|| Error::Unknown("Path is not valid UTF-8".to_string()))?;
     let path_c = CString::new(path_str)?;
+
+    // In pure-eval mode the evaluator wraps the filesystem in an
+    // AllowListSourceAccessor and rejects unregistered absolute paths
+    // that match the store directory. We auto-register only paths whose
+    // string starts with "/nix/store/" because the C++ allowPath call
+    // requires a parseable store path; anything else would throw a C++
+    // exception that crosses the FFI as undefined behaviour.
+    #[cfg(feature = "shim")]
+    if path.as_ref().is_absolute()
+      && path_str.starts_with("/nix/store/")
+      && is_pure_eval()
+    {
+      // SAFETY: context, state, and path are valid.
+      unsafe {
+        check_err(
+          self.context.as_ptr(),
+          sys::nix_eval_state_allow_path(
+            self.context.as_ptr(),
+            self.inner.as_ptr(),
+            path_c.as_ptr(),
+          ),
+        )?;
+      }
+    }
+
     // SAFETY: context, state, and value are valid
     unsafe {
       check_err(
