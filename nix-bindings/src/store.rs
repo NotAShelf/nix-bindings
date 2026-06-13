@@ -109,7 +109,9 @@ impl StorePath {
     let inner = match NonNull::new(path_ptr) {
       Some(p) => p,
       None => {
-        return Err(unsafe { null_or_context_err(context, Error::NullPointer) });
+        return Err(unsafe {
+          null_or_context_err(context, Error::NullPointer)
+        });
       },
     };
 
@@ -491,7 +493,9 @@ impl Store {
     let inner = match NonNull::new(store_ptr) {
       Some(p) => p,
       None => {
-        return Err(unsafe { null_or_context_err(context, Error::NullPointer) });
+        return Err(unsafe {
+          null_or_context_err(context, Error::NullPointer)
+        });
       },
     };
 
@@ -842,6 +846,34 @@ impl Store {
       |p| out.push(p.clone()),
     )?;
     Ok(out)
+  }
+
+  /// Render a [`StorePath`] back to its canonical `/nix/store/...` string.
+  ///
+  /// Requires the `shim` feature: the C API does not expose a path-to-string
+  /// function directly; this calls a C++ shim that delegates to
+  /// `store->printStorePath(path)`.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the rendering fails.
+  #[cfg(feature = "shim")]
+  pub fn print_path(&self, path: &StorePath) -> Result<String> {
+    // SAFETY: context, store, and path are valid
+    let mut err_code = sys::nix_err_NIX_OK;
+    let result = unsafe {
+      crate::string_from_callback(|cb, ud| {
+        err_code = sys::nix_store_path_to_string(
+          self._context.as_ptr(),
+          self.inner.as_ptr(),
+          path.inner.as_ptr(),
+          cb,
+          ud,
+        );
+      })
+    };
+    check_err(unsafe { self._context.as_ptr() }, err_code)?;
+    result.ok_or(Error::NullPointer)
   }
 
   /// Read a derivation from this store by its store path.
