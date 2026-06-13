@@ -154,6 +154,6 @@ fn main() {
       cc_build.file("src/wrappers/init_path.cc");
     }
 
-    cc_build.compile("nix_api_store_text");
+    cc_build.compile("nix_shims");
   }
 }
