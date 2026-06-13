@@ -41,11 +41,12 @@
 //! ```
 
 use std::{
+  collections::HashSet,
   ffi::{CStr, CString},
   marker::PhantomData,
   os::raw::c_void,
   panic::{self, AssertUnwindSafe},
-  sync::Arc,
+  sync::{Arc, Mutex, OnceLock},
 };
 
 use crate::{Context, Error, Result, ValueType, check_err, sys};
@@ -116,7 +117,19 @@ unsafe extern "C" fn trampoline(
   let err_msg = match result {
     Ok(Ok(())) => return,
     Ok(Err(e)) => format!("primop error: {e}"),
-    Err(_) => "primop panicked".to_string(),
+    Err(payload) => {
+      // Try to pull a useful message out of the panic payload before
+      // giving up. catch_unwind boxes the payload; the standard panics
+      // produce &str or String.
+      let detail = if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_owned()
+      } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+      } else {
+        "unknown panic payload".to_owned()
+      };
+      format!("primop panicked: {detail}")
+    },
   };
 
   let msg_c = CString::new(err_msg)
@@ -154,9 +167,12 @@ pub struct PrimOpArg<'a> {
   _phantom: PhantomData<&'a ()>,
 }
 
-// PrimOpArg is only used within the synchronous callback; no cross-thread use.
-unsafe impl Send for PrimOpArg<'_> {}
-unsafe impl Sync for PrimOpArg<'_> {}
+// PrimOpArg is callback-frame-scoped: its raw context and EvalState pointers
+// only stay valid while the trampoline is on the stack. Marking it Send would
+// let a user move it into a thread that outlives the call, which would be a
+// use-after-free. The PhantomData<&'a ()> already makes it !Send + !Sync
+// implicitly via the raw pointers, so we deliberately do NOT add Send/Sync
+// impls here.
 
 impl PrimOpArg<'_> {
   /// Return the [`ValueType`] of this argument.
@@ -509,6 +525,7 @@ impl PrimOpRet<'_> {
     }
   }
 
+
   /// Copy the value pointed to by `src` into the return slot.
   ///
   /// This is useful when the result is an existing [`Value`](crate::Value)
@@ -767,8 +784,10 @@ pub struct PrimOpValue {
   state: *mut sys::EvalState,
 }
 
-unsafe impl Send for PrimOpValue {}
-unsafe impl Sync for PrimOpValue {}
+// PrimOpValue holds raw pointers borrowed from the callback frame. Sending
+// it across threads would let it outlive the EvalState it points into, so we
+// deliberately do NOT add Send/Sync impls. The raw pointers already prevent
+// the auto-trait, this comment just documents the intent.
 
 impl PrimOpValue {
   fn alloc(
@@ -1014,8 +1033,8 @@ pub struct ArgAttrs<'a> {
   _phantom: PhantomData<&'a ()>,
 }
 
-unsafe impl Send for ArgAttrs<'_> {}
-unsafe impl Sync for ArgAttrs<'_> {}
+// ArgAttrs borrows from a callback-frame value; see PrimOpArg above for
+// why we deliberately omit Send/Sync impls.
 
 impl ArgAttrs<'_> {
   /// Get an attribute by name.
@@ -1086,11 +1105,12 @@ impl ArgAttrs<'_> {
       if name_ptr.is_null() {
         continue;
       }
-      let name = unsafe {
-        std::ffi::CStr::from_ptr(name_ptr)
-          .to_string_lossy()
-          .into_owned()
-      };
+      let name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }
+        .to_str()
+        .map_err(|_| {
+          Error::Unknown("Attribute name was not valid UTF-8".to_string())
+        })?
+        .to_owned();
       keys.push(name);
     }
     Ok(keys)
@@ -1121,8 +1141,8 @@ pub struct ArgList<'a> {
   _phantom: PhantomData<&'a ()>,
 }
 
-unsafe impl Send for ArgList<'_> {}
-unsafe impl Sync for ArgList<'_> {}
+// ArgList borrows from a callback-frame value; see PrimOpArg above for
+// why we deliberately omit Send/Sync impls.
 
 impl ArgList<'_> {
   /// Get an element by index.
@@ -1184,9 +1204,17 @@ pub struct PrimOp {
   inner:      *mut sys::PrimOp,
   /// Keeps the context alive for the lifetime of the PrimOp.
   context:    Arc<Context>,
+  /// The name passed to [`PrimOp::new`], retained for duplicate-registration
+  /// diagnostics.
+  name:       String,
   /// Set to `true` after `register()` so Drop skips the decref.
   registered: bool,
 }
+
+/// Names of primops that have been registered as global builtins through
+/// [`PrimOp::register`].  Used to fail loudly when the same name is offered
+/// twice; the Nix C API silently accepts that today.
+static REGISTERED_PRIMOPS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 // SAFETY: PrimOp contains raw pointers but is only ever manipulated on a
 // single thread. The underlying PrimOp object is GC-managed.
@@ -1200,9 +1228,19 @@ impl PrimOp {
   ///
   /// * `context`: the Nix context.
   /// * `name`: the name of the primop as it will appear in Nix.
-  /// * `arity`: number of arguments the primop accepts.
+  /// * `arity`: number of arguments the primop accepts.  See note below
+  ///   about `arity == 0`.
   /// * `doc`: optional documentation string.
   /// * `f`: the Rust closure to invoke.
+  ///
+  /// # Arity restrictions
+  ///
+  /// Nix does not allow nullary primops to be called as functions.  An
+  /// `arity == 0` primop can only ever be evaluated as a thunk reached
+  /// through the global builtins table (so it must be registered via
+  /// [`register`](Self::register); [`into_value`](Self::into_value) returns
+  /// a value that is not callable as a function).  For most cases pass
+  /// `arity >= 1` even if the closure ignores its arguments.
   ///
   /// # Errors
   ///
@@ -1278,6 +1316,7 @@ impl PrimOp {
     Ok(PrimOp {
       inner:      primop_ptr,
       context:    Arc::clone(context),
+      name:       name.to_string(),
       registered: false,
     })
   }
@@ -1294,6 +1333,20 @@ impl PrimOp {
   ///
   /// Returns an error if the registration fails.
   pub fn register(mut self, context: &Context) -> Result<()> {
+    // Guard against duplicate-name registration. The Nix C API does not
+    // diagnose this; the second registration silently shadows or is dropped
+    // depending on internal ordering, and the user gets no feedback.
+    {
+      let names = REGISTERED_PRIMOPS.get_or_init(|| Mutex::new(HashSet::new()));
+      let mut guard = names.lock().expect("REGISTERED_PRIMOPS poisoned");
+      if !guard.insert(self.name.clone()) {
+        return Err(Error::Unknown(format!(
+          "primop '{}' is already registered globally",
+          self.name
+        )));
+      }
+    }
+
     // SAFETY: context and inner are valid
     let err = unsafe { sys::nix_register_primop(context.as_ptr(), self.inner) };
     check_err(unsafe { self.context.as_ptr() }, err)?;
