@@ -447,12 +447,11 @@ impl PrimOpRet<'_> {
   /// # Pure Evaluation
   ///
   /// This calls `nix_init_path_string`, which the Nix evaluator rejects for
-  /// absolute paths when running with `--pure-eval`.  It returns
-  /// [`Error::EvalError`](crate::Error::EvalError) in that case.  If the path
-  /// is a store path your primop already added to the store, use
-  /// [`set_store_path`](Self::set_store_path) (requires the `shim` feature)
-  /// instead; it registers the path with the evaluator's allowlist so the
-  /// value is usable in pure mode.
+  /// absolute paths when running with `--pure-eval`. It returns
+  /// [`Error::EvalError`] in that case. If the path is a store path your primop
+  /// already added to the store, use [`set_store_path`](Self::set_store_path)
+  /// (requires the `shim` feature) instead; it registers the path with the
+  /// evaluator's allowlist so the value is usable in pure mode.
   ///
   /// # Errors
   ///
