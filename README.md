@@ -33,7 +33,9 @@ The repository contains a large test suite, examples, safety documentation, and
 The **low-level** bindings generated via [rust-bindgen] are located in the
 `nix-bindings-sys` crate in [`nix-bindings-sys/`](./nix-bindings-sys). By
 default, the low-level bindings crate covers **all public Nix C API headers**,
-including the store, evaluator, error, flake, and main APIs.
+including the store, evaluator, error, flake, and main APIs. There exists an
+attempt to support the C++ APIs as well, but those should be approached with
+caution due to upstream's treatment of the C++ APIs. Read below for details.
 
 The [`nix-bindings/`](./nix-bindings) crate wraps `nix-bindings-sys` and
 attempts to provide a more robust, **high-level** API for interacting with Nix
@@ -41,12 +43,18 @@ using Rust through a cleaner interface with additional safety documentation,
 testing, examples and more.
 
 > [!NOTE]
-> Due to the limitations of rust-bindgen, there is no compatibility outside the
-> public C API. As much as I would love to provide bindings for the C++ APIs,
-> this seems very annoying and is [discouraged by Bindgen]. For interacting with
-> C++ APIs, you might want to use C++ directly. See [this blog post] that
-> inspired this repository for instructions on using Nix as a library in C++
-> projects.
+> Previously, due to the limitations of rust-bindgen, this crate refused to
+> provide compatibility outside the public C API. My reasoning for this decision
+> was that it is very annoying to provide bindings for the _unstable_ C++ API,
+> and doing so is [discouraged by Bindgen]. This document used to cite
+> [this blog post] that inspired this repository for instructions on using Nix
+> as a library in C++ projects.
+>
+> As of v0.2347.2, this crate **provides experimental C++ shims**. This is very
+> much discouraged, but is the only way to work around the quirks and the status
+> of the C API. There is an effort to make those reliable, sound, and
+> _idiomatic_ but none of those can be guaranteed. Please be careful if you're
+> interacting with the C++ shims and remember to report any issues!
 
 ## Repository Layout
 
@@ -80,10 +88,12 @@ comments, examples and everything else provided by individual crate READMEs.
 
 ## Contributing
 
+[`CONTRIBUTING.md`]: ./CONTRIBUTING.md
+
 Contributions are welcome! If you have noticed something missing and would like
 to patch it yourself, I would appreciate contributions. Please read
-[`CONTRIBUTING.md`](./CONTRIBUTING.md) first; it covers about everything you
-need to know, but here is a short version:
+[`CONTRIBUTING.md`] first; it covers about everything you need to know, but here
+is a short version:
 
 - Keep examples and tests small, focused, and idiomatic
 - Follow Rust FFI safety best practices
