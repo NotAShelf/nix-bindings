@@ -26,6 +26,7 @@ fn main() {
   println!("cargo:rerun-if-changed=include/nix_api_expr_shim.h");
   println!("cargo:rerun-if-changed=src/wrappers/add_to_store.cc");
   println!("cargo:rerun-if-changed=src/wrappers/init_path.cc");
+  println!("cargo:rerun-if-changed=src/wrappers/eval.cc");
 
   // docs.rs has no Nix system libraries. Write empty bindings so the crate
   // compiles and return before any pkg-config or cc invocation.
@@ -124,13 +125,23 @@ fn main() {
     }
 
     if env::var("CARGO_FEATURE_EXPR").is_ok() {
-      // Only probe the C API package. nix-expr.pc (C++) pulls in transitive
-      // deps (gc, boost, ...) that downstream builds may not expose. The C++
-      // include root is already covered by the nix-store/nix-util includes
-      // above; nix-expr-c supplies the internal C API headers we actually need.
+      // Probe the C API package for its internal headers
+      // (nix_api_expr_internal.h, etc.).
       let lib = pkg_config::probe_library("nix-expr-c")
         .unwrap_or_else(|_| panic!("Unable to find .pc file for nix-expr-c"));
       for path in &lib.include_paths {
+        cc_build.include(path);
+      }
+
+      // eval.cc needs get-drvs.hh from the C++ nix-expr package. Probe for
+      // include paths only; cargo_metadata(false) suppresses the transitive
+      // link directives (gc, boost, ...) that nix-expr.pc carries and that
+      // downstream builds may not expose.
+      let expr_lib = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("nix-expr")
+        .unwrap_or_else(|_| panic!("Unable to find .pc file for nix-expr"));
+      for path in &expr_lib.include_paths {
         cc_build.include(path);
       }
     }
@@ -156,10 +167,10 @@ fn main() {
 
     if env::var("CARGO_FEATURE_EXPR").is_ok() {
       cc_build.file("src/wrappers/init_path.cc");
-      // init_path.cc calls nix::EvalState::allowPath, which lives in the
-      // C++ libnixexpr (not in the C wrapper libnixexprc that pkg-config
-      // for nix-expr-c reports). Force the C++ library onto the link line
-      // so dependent crates that only touch the C API still link.
+      cc_build.file("src/wrappers/eval.cc");
+      // Both init_path.cc and eval.cc call into C++ libnixexpr (allowPath,
+      // getDerivation, autoCallFunction). Force it onto the link line so
+      // dependent crates that only use the C API still link correctly.
       println!("cargo:rustc-link-lib=dylib=nixexpr");
     }
 
