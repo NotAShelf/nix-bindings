@@ -10,6 +10,7 @@ use crate::{
   Error,
   Result,
   Store,
+  StorePath,
   Value,
   context::is_pure_eval,
   error::check_err,
@@ -520,6 +521,90 @@ impl EvalState {
           self.context.as_ptr(),
           result.inner.as_ptr(),
           builder,
+        ),
+      )?;
+    }
+
+    Ok(result)
+  }
+
+  /// Determine whether a value is a derivation and return its store path.
+  ///
+  /// Forces `value` and, if it is a derivation, returns a newly allocated
+  /// [`StorePath`] for its `.drvPath`. Returns `Ok(None)` when the value is
+  /// not a derivation. An exception raised during forcing propagates as
+  /// `Err(...)`.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if forcing the value raises a Nix exception.
+  #[cfg(feature = "shim")]
+  pub fn get_derivation(&self, value: &Value<'_>) -> Result<Option<StorePath>> {
+    // SAFETY: context, state, and value are valid for the call duration.
+    let path_ptr = unsafe {
+      sys::nix_get_derivation(
+        self.context.as_ptr(),
+        self.inner.as_ptr(),
+        value.inner.as_ptr(),
+        false,
+      )
+    };
+
+    if path_ptr.is_null() {
+      // NIXC_CATCH_ERRS_NULL sets last_err_code on exception. A plain null
+      // (no exception, maybePkg was empty) leaves last_err_code at NIX_OK.
+      // SAFETY: context is valid for the lifetime of self.
+      unsafe {
+        let ctx = self.context.as_ptr();
+        let code = sys::nix_err_code(ctx);
+        check_err(ctx, code)?;
+      }
+      return Ok(None);
+    }
+
+    let inner = NonNull::new(path_ptr).ok_or(Error::NullPointer)?;
+    Ok(Some(StorePath {
+      inner,
+      _context: Arc::clone(&self.context),
+    }))
+  }
+
+  /// Call a function using an attribute set as its argument source.
+  ///
+  /// Forces `fn_val` and writes the result into a newly allocated value:
+  ///
+  /// - If `fn_val` is a function with named formals, each formal is looked up
+  ///   in `auto_args`; formals with defaults that are absent from `auto_args`
+  ///   use their defaults.
+  /// - If `auto_args` is `None`, empty bindings are supplied (every formal must
+  ///   then have a default).
+  /// - If `fn_val` is not a function, the value is copied to the result
+  ///   unchanged.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the call fails.
+  #[cfg(feature = "shim")]
+  pub fn auto_call_function<'s>(
+    &'s self,
+    auto_args: Option<&Value<'_>>,
+    fn_val: &Value<'_>,
+  ) -> Result<Value<'s>> {
+    let result = self.alloc_value()?;
+    let auto_args_ptr =
+      auto_args.map_or(std::ptr::null_mut(), |v| v.inner.as_ptr());
+
+    // SAFETY: context, state, auto_args_ptr (null or valid), fn_val, and
+    // result are all valid for the call duration.
+    unsafe {
+      check_err(
+        self.context.as_ptr(),
+        sys::nix_value_auto_call_function(
+          self.context.as_ptr(),
+          self.inner.as_ptr(),
+          auto_args_ptr,
+          fn_val.inner.as_ptr(),
+          result.inner.as_ptr(),
         ),
       )?;
     }
