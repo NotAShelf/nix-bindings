@@ -164,3 +164,34 @@ pub(crate) fn check_err(
     _ => Err(Error::Unknown(message)),
   }
 }
+
+/// Convert a possibly-null pointer from a Nix C API call into a [`NonNull`],
+/// surfacing the context's parked error when the pointer is null.
+///
+/// Nix's pointer-returning entry points (e.g. `nix_flake_lock`) report failure
+/// by returning null and leaving the real error (code + message) on the
+/// context. Mapping null straight to [`Error::NullPointer`] discards that
+/// message, which is how a genuine Nix failure ("cannot find revision ...",
+/// "access to URI ... is blocked", ...) is reduced to an opaque "Null pointer
+/// error". This reads the parked error via [`check_err`] instead.
+///
+/// # Errors
+///
+/// Returns the parked context error when one is set, or [`Error::NullPointer`]
+/// when the pointer is null with no error recorded (a genuinely value-less
+/// null, such as an absent optional).
+#[cfg(feature = "store")]
+pub(crate) fn check_ptr<T>(
+  ctx: *mut sys::nix_c_context,
+  ptr: *mut T,
+) -> Result<std::ptr::NonNull<T>> {
+  if let Some(non_null) = std::ptr::NonNull::new(ptr) {
+    return Ok(non_null);
+  }
+  // SAFETY: `ctx` is a live context pointer owned by the caller.
+  let code = unsafe { sys::nix_err_code(ctx) };
+  match check_err(ctx, code) {
+    Ok(()) => Err(Error::NullPointer),
+    Err(e) => Err(e),
+  }
+}

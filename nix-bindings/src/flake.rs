@@ -18,7 +18,7 @@
 
 use std::{ffi::CString, ptr::NonNull, sync::Arc};
 
-use crate::{Context, Error, EvalState, Result, Value, check_err, sys};
+use crate::{Context, EvalState, Result, Value, check_err, check_ptr, sys};
 
 /// Configuration for the Nix flake subsystem.
 ///
@@ -60,7 +60,7 @@ impl FlakeSettings {
     // SAFETY: context is valid
     let ptr = unsafe { sys::nix_flake_settings_new(context.as_ptr()) };
 
-    let inner = NonNull::new(ptr).ok_or(Error::NullPointer)?;
+    let inner = check_ptr(unsafe { context.as_ptr() }, ptr)?;
 
     Ok(FlakeSettings {
       inner,
@@ -109,7 +109,7 @@ impl FetchersSettings {
   pub fn new(context: &Arc<Context>) -> Result<Self> {
     // SAFETY: context is valid
     let ptr = unsafe { sys::nix_fetchers_settings_new(context.as_ptr()) };
-    let inner = NonNull::new(ptr).ok_or(Error::NullPointer)?;
+    let inner = check_ptr(unsafe { context.as_ptr() }, ptr)?;
     Ok(FetchersSettings {
       inner,
       _context: Arc::clone(context),
@@ -164,7 +164,7 @@ impl FlakeReferenceParseFlags {
         flake_settings.as_ptr(),
       )
     };
-    let inner = NonNull::new(ptr).ok_or(Error::NullPointer)?;
+    let inner = check_ptr(unsafe { context.as_ptr() }, ptr)?;
     Ok(FlakeReferenceParseFlags {
       inner,
       _context: Arc::clone(context),
@@ -256,7 +256,7 @@ impl LockFlags {
     let ptr = unsafe {
       sys::nix_flake_lock_flags_new(context.as_ptr(), flake_settings.as_ptr())
     };
-    let inner = NonNull::new(ptr).ok_or(Error::NullPointer)?;
+    let inner = check_ptr(unsafe { context.as_ptr() }, ptr)?;
     Ok(LockFlags {
       inner,
       _context: Arc::clone(context),
@@ -409,7 +409,7 @@ impl FlakeReference {
 
     check_err(unsafe { context.as_ptr() }, err)?;
 
-    let inner = NonNull::new(out_ptr).ok_or(Error::NullPointer)?;
+    let inner = check_ptr(unsafe { context.as_ptr() }, out_ptr)?;
 
     let frag = fragment.unwrap_or_default();
 
@@ -477,7 +477,7 @@ impl LockedFlake {
       )
     };
 
-    let inner = NonNull::new(ptr).ok_or(Error::NullPointer)?;
+    let inner = check_ptr(unsafe { context.as_ptr() }, ptr)?;
 
     Ok(LockedFlake {
       inner,
@@ -507,7 +507,7 @@ impl LockedFlake {
       )
     };
 
-    let inner = std::ptr::NonNull::new(ptr).ok_or(Error::NullPointer)?;
+    let inner = check_ptr(unsafe { self._context.as_ptr() }, ptr)?;
 
     Ok(Value {
       inner,
