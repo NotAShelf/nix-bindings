@@ -24,9 +24,11 @@ fn main() {
   println!("cargo:rerun-if-changed=include/wrapper.h");
   println!("cargo:rerun-if-changed=include/nix_api_store_text.h");
   println!("cargo:rerun-if-changed=include/nix_api_expr_shim.h");
+  println!("cargo:rerun-if-changed=include/nix_api_flake_shim.h");
   println!("cargo:rerun-if-changed=src/wrappers/add_to_store.cc");
   println!("cargo:rerun-if-changed=src/wrappers/init_path.cc");
   println!("cargo:rerun-if-changed=src/wrappers/eval.cc");
+  println!("cargo:rerun-if-changed=src/wrappers/flake.cc");
 
   // docs.rs has no Nix system libraries. Write empty bindings so the crate
   // compiles and return before any pkg-config or cc invocation.
@@ -137,6 +139,24 @@ fn main() {
       }
     }
 
+    if env::var("CARGO_FEATURE_FLAKE").is_ok() {
+      for pc in ["nix-fetchers-c", "nix-flake-c"] {
+        let lib = pkg_config::probe_library(pc)
+          .unwrap_or_else(|_| panic!("Unable to find .pc file for {pc}"));
+        for path in &lib.include_paths {
+          cc_build.include(path);
+        }
+      }
+
+      let flake_lib = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("nix-flake")
+        .unwrap_or_else(|_| panic!("Unable to find .pc file for nix-flake"));
+      for path in &flake_lib.include_paths {
+        cc_build.include(path);
+      }
+    }
+
     // Pull `-isystem` paths from NIX_CFLAGS_COMPILE (toolchain include dirs
     // in a Nix dev shell) and surface them as `-I` to cc-rs. Then blank the
     // var for the child so the cc wrapper doesn't apply them a second time.
@@ -163,6 +183,12 @@ fn main() {
       // getDerivation, autoCallFunction). Force it onto the link line so
       // dependent crates that only use the C API still link correctly.
       println!("cargo:rustc-link-lib=dylib=nixexpr");
+    }
+
+    if env::var("CARGO_FEATURE_FLAKE").is_ok() {
+      cc_build.file("src/wrappers/flake.cc");
+      println!("cargo:rustc-link-lib=dylib=nixflake");
+      println!("cargo:rustc-link-lib=dylib=nixfetchers");
     }
 
     cc_build.compile("nix_shims");

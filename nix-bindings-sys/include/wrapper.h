@@ -31,3 +31,7 @@
 #if defined(FEATURE_SHIM) && defined(FEATURE_EXPR)
 #include "nix_api_expr_shim.h"
 #endif
+
+#if defined(FEATURE_SHIM) && defined(FEATURE_FLAKE)
+#include "nix_api_flake_shim.h"
+#endif
