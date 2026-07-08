@@ -1,5 +1,5 @@
 #![allow(clippy::expect_used)]
-use std::{env, path::PathBuf, process::Command};
+use std::{env, path::PathBuf};
 
 use bindgen::callbacks::ParseCallbacks;
 
@@ -37,21 +37,12 @@ fn main() {
     return;
   }
 
-  // Dynamically get GCC's include path for standard headers (e.g., stdbool.h)
-  let gcc_include = Command::new("gcc")
-    .arg("-print-file-name=include")
-    .output()
-    .expect("Failed to get gcc include path")
-    .stdout;
-  let gcc_include = String::from_utf8_lossy(&gcc_include).trim().to_string();
-
   let mut builder = bindgen::Builder::default()
     .header("include/wrapper.h")
     .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
     .formatter(bindgen::Formatter::Rustfmt)
     .rustfmt_configuration_file(std::fs::canonicalize(".rustfmt.toml").ok())
     .parse_callbacks(Box::new(ProcessComments))
-    .clang_arg(format!("-I{gcc_include}"))
     .clang_arg("-Iinclude");
 
   // (Cargo feature env var, preprocessor define, optional pkg-config lib name)
