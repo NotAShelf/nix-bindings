@@ -157,7 +157,7 @@ impl Value<'_> {
   ///
   /// Wraps `nix_get_typename`. Returns Nix's source-of-truth string (e.g.
   /// `"int"`, `"thunk"`, `"lambda"`). Falls back to the local
-  /// [`ValueType::to_string`] if the C call returns null.
+  /// local `ValueType` display text if the C call returns null.
   #[must_use]
   pub fn type_name(&self) -> String {
     // SAFETY: context and value are valid.
