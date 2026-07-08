@@ -132,7 +132,12 @@ pub use error::{Error, Result};
 // `crate::string_from_callback` paths in the module bodies keep working
 // without each module having to update its imports.
 #[cfg(feature = "store")]
-pub(crate) use error::{check_err, check_ptr, string_from_callback};
+pub(crate) use error::{
+  check_err,
+  check_ptr,
+  checked_string_from_callback,
+  string_from_callback,
+};
 
 #[cfg(feature = "store")] mod context;
 #[cfg(feature = "store")]

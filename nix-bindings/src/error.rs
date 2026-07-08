@@ -86,23 +86,50 @@ pub(crate) unsafe fn string_from_callback<F>(call: F) -> Option<String>
 where
   F: FnOnce(sys::nix_get_string_callback, *mut std::os::raw::c_void),
 {
-  unsafe extern "C" fn collect(
-    start: *const std::os::raw::c_char,
-    n: std::os::raw::c_uint,
-    user_data: *mut std::os::raw::c_void,
-  ) {
-    let result = unsafe { &mut *(user_data as *mut Option<String>) };
-    if !start.is_null() {
-      let bytes =
-        unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
-      *result = std::str::from_utf8(bytes).ok().map(|s| s.to_owned());
-    }
-  }
-
   let mut result: Option<String> = None;
   let user_data = &mut result as *mut _ as *mut std::os::raw::c_void;
-  call(Some(collect), user_data);
+  call(Some(collect_string), user_data);
   result
+}
+
+/// Extract a string from a fallible Nix callback API.
+///
+/// # Safety
+///
+/// `call` must invoke `callback` with a valid string pointer and length when
+/// it returns [`sys::nix_err_NIX_OK`].
+#[cfg(feature = "store")]
+pub(crate) unsafe fn checked_string_from_callback<F>(
+  ctx: *mut sys::nix_c_context,
+  call: F,
+) -> Result<String>
+where
+  F: FnOnce(
+    sys::nix_get_string_callback,
+    *mut std::os::raw::c_void,
+  ) -> sys::nix_err,
+{
+  let mut result = None;
+  let user_data = &mut result as *mut _ as *mut std::os::raw::c_void;
+  let err = call(Some(collect_string), user_data);
+  check_err(ctx, err)?;
+  result.ok_or_else(|| {
+    Error::Unknown("Nix string callback returned no string".to_string())
+  })
+}
+
+#[cfg(feature = "store")]
+unsafe extern "C" fn collect_string(
+  start: *const std::os::raw::c_char,
+  n: std::os::raw::c_uint,
+  user_data: *mut std::os::raw::c_void,
+) {
+  let result = unsafe { &mut *(user_data as *mut Option<String>) };
+  if !start.is_null() {
+    let bytes =
+      unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
+    *result = std::str::from_utf8(bytes).ok().map(str::to_owned);
+  }
 }
 
 /// Check a Nix error code and convert to `Result`, extracting the real

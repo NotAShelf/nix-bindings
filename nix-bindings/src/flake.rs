@@ -18,7 +18,16 @@
 
 use std::{ffi::CString, ptr::NonNull, sync::Arc};
 
-use crate::{Context, EvalState, Result, Value, check_err, check_ptr, sys};
+use crate::{
+  Context,
+  EvalState,
+  Result,
+  Value,
+  check_err,
+  check_ptr,
+  checked_string_from_callback,
+  sys,
+};
 
 /// Configuration for the Nix flake subsystem.
 ///
@@ -451,6 +460,17 @@ pub struct LockedFlake {
   _context: Arc<Context>,
 }
 
+/// A locked flake graph imported from an owned export payload.
+///
+/// This is intentionally narrower than [`LockedFlake`]. It contains enough
+/// graph state to evaluate outputs through Nix's `callFlake`, but it is not a
+/// general-purpose replacement for a flake freshly returned by
+/// [`LockedFlake::lock`].
+pub struct ImportedLockedFlake {
+  inner:    NonNull<sys::nix_locked_flake>,
+  _context: Arc<Context>,
+}
+
 impl LockedFlake {
   /// Lock a flake, resolving and pinning all inputs.
   ///
@@ -485,6 +505,29 @@ impl LockedFlake {
     })
   }
 
+  /// Export this locked flake as an owned JSON graph.
+  ///
+  /// The exported JSON contains the lock file and the source-path overrides
+  /// Nix keeps beside it for local or overridden inputs. Send this payload to
+  /// another process and reconstruct it with
+  /// [`ImportedLockedFlake::import_json`].
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the C API call fails or returns invalid UTF-8.
+  pub fn export_json(&self) -> Result<String> {
+    unsafe {
+      checked_string_from_callback(self._context.as_ptr(), |cb, ud| {
+        sys::nix_locked_flake_export_json(
+          self._context.as_ptr(),
+          self.inner.as_ptr(),
+          cb,
+          ud,
+        )
+      })
+    }
+  }
+
   /// Get the output attributes of this locked flake as a Nix value.
   ///
   /// The returned [`Value`] is tied to the lifetime of `eval_state`.
@@ -497,26 +540,102 @@ impl LockedFlake {
     flake_settings: &FlakeSettings,
     eval_state: &'s EvalState,
   ) -> Result<Value<'s>> {
-    // SAFETY: all pointers are valid
-    let ptr = unsafe {
-      sys::nix_locked_flake_get_output_attrs(
-        self._context.as_ptr(),
-        flake_settings.as_ptr(),
-        eval_state.as_ptr(),
-        self.inner.as_ptr(),
-      )
-    };
-
-    let inner = check_ptr(unsafe { self._context.as_ptr() }, ptr)?;
-
-    Ok(Value {
-      inner,
-      state: eval_state,
-    })
+    output_attrs_from_raw(
+      &self._context,
+      self.inner,
+      flake_settings,
+      eval_state,
+    )
   }
 }
 
+impl ImportedLockedFlake {
+  /// Import a locked flake graph from an owned JSON graph.
+  ///
+  /// The root flake and inputs are taken from `json`; this does not resolve a
+  /// flake reference, update inputs, or write a lock file.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the C API call fails or returns a null pointer.
+  pub fn import_json(
+    context: &Arc<Context>,
+    fetch_settings: &FetchersSettings,
+    json: &str,
+  ) -> Result<Self> {
+    let bytes = json.as_bytes();
+    let ptr = unsafe {
+      sys::nix_locked_flake_import_json(
+        context.as_ptr(),
+        fetch_settings.as_ptr(),
+        bytes.as_ptr().cast(),
+        bytes.len(),
+      )
+    };
+
+    let inner = check_ptr(unsafe { context.as_ptr() }, ptr)?;
+
+    Ok(Self {
+      inner,
+      _context: Arc::clone(context),
+    })
+  }
+
+  /// Get the output attributes of this imported graph as a Nix value.
+  ///
+  /// The returned [`Value`] is tied to the lifetime of `eval_state`.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the C API call fails.
+  pub fn output_attrs<'s>(
+    &self,
+    flake_settings: &FlakeSettings,
+    eval_state: &'s EvalState,
+  ) -> Result<Value<'s>> {
+    output_attrs_from_raw(
+      &self._context,
+      self.inner,
+      flake_settings,
+      eval_state,
+    )
+  }
+}
+
+fn output_attrs_from_raw<'s>(
+  context: &Arc<Context>,
+  inner: NonNull<sys::nix_locked_flake>,
+  flake_settings: &FlakeSettings,
+  eval_state: &'s EvalState,
+) -> Result<Value<'s>> {
+  // SAFETY: all pointers are valid.
+  let ptr = unsafe {
+    sys::nix_locked_flake_get_output_attrs(
+      context.as_ptr(),
+      flake_settings.as_ptr(),
+      eval_state.as_ptr(),
+      inner.as_ptr(),
+    )
+  };
+
+  let inner = check_ptr(unsafe { context.as_ptr() }, ptr)?;
+
+  Ok(Value {
+    inner,
+    state: eval_state,
+  })
+}
+
 impl Drop for LockedFlake {
+  fn drop(&mut self) {
+    // SAFETY: We own the locked flake and it is valid until drop
+    unsafe {
+      sys::nix_locked_flake_free(self.inner.as_ptr());
+    }
+  }
+}
+
+impl Drop for ImportedLockedFlake {
   fn drop(&mut self) {
     // SAFETY: We own the locked flake and it is valid until drop
     unsafe {
@@ -532,9 +651,12 @@ impl Drop for LockedFlake {
 // implemented.
 unsafe impl Send for LockedFlake {}
 
+// SAFETY: same ownership and thread-safety contract as `LockedFlake`.
+unsafe impl Send for ImportedLockedFlake {}
+
 #[cfg(test)]
 mod tests {
-  use std::sync::Arc;
+  use std::{fs, sync::Arc};
 
   use serial_test::serial;
 
@@ -631,5 +753,129 @@ mod tests {
       .expect("create")
       .set_mode(LockMode::WriteAsNeeded)
       .expect("set WriteAsNeeded");
+  }
+
+  #[test]
+  #[serial]
+  fn test_locked_flake_export_import_json() {
+    let root = tempfile::tempdir().expect("create root tempdir");
+    let original = tempfile::tempdir().expect("create original input tempdir");
+    let override_input =
+      tempfile::tempdir().expect("create override input tempdir");
+
+    fs::write(
+      original.path().join("flake.nix"),
+      r#"{
+  outputs = { self }: {
+    answer = 1;
+  };
+}
+"#,
+    )
+    .expect("write original input flake");
+    fs::write(
+      override_input.path().join("flake.nix"),
+      r#"{
+  outputs = { self }: {
+    answer = 42;
+  };
+}
+"#,
+    )
+    .expect("write override input flake");
+    fs::write(
+      root.path().join("flake.nix"),
+      format!(
+        r#"{{
+  inputs.dep.url = "path:{}";
+  outputs = {{ self, dep }}: {{
+    answer = dep.answer;
+  }};
+}}
+"#,
+        original.path().display(),
+      ),
+    )
+    .expect("write root flake");
+
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let settings = Arc::new(
+      FlakeSettings::new(&ctx).expect("Failed to create flake settings"),
+    );
+    let fetch_settings =
+      FetchersSettings::new(&ctx).expect("Failed to create fetcher settings");
+    let parse_flags = FlakeReferenceParseFlags::new(&ctx, &settings)
+      .expect("Failed to create parse flags");
+    let flake_ref = format!("path:{}#answer", root.path().display());
+    let (flake_ref, fragment) = FlakeReference::parse(
+      &ctx,
+      &fetch_settings,
+      &settings,
+      &parse_flags,
+      &flake_ref,
+    )
+    .expect("parse flake ref");
+    assert_eq!(fragment, "answer");
+    let override_ref = format!("path:{}", override_input.path().display());
+    let (override_ref, override_fragment) = FlakeReference::parse(
+      &ctx,
+      &fetch_settings,
+      &settings,
+      &parse_flags,
+      &override_ref,
+    )
+    .expect("parse override flake ref");
+    assert!(override_fragment.is_empty());
+
+    let (store, state) = make_state(&ctx);
+    let lock_flags = LockFlags::new(&ctx, &settings)
+      .expect("create lock flags")
+      .set_mode(LockMode::Virtual)
+      .expect("set virtual mode")
+      .add_input_override("dep", &override_ref)
+      .expect("add input override");
+    let locked = LockedFlake::lock(
+      &ctx,
+      &fetch_settings,
+      &settings,
+      &state,
+      &lock_flags,
+      &flake_ref,
+    )
+    .expect("lock flake");
+
+    let exported = locked.export_json().expect("export locked flake");
+    assert!(exported.contains("\"lockFile\""));
+    assert!(exported.contains("\"dep\""));
+    drop(locked);
+    drop(state);
+    drop(store);
+
+    fs::write(
+      override_input.path().join("flake.nix"),
+      r#"{
+  outputs = { self }: {
+    answer = 99;
+  };
+}
+"#,
+    )
+    .expect("mutate override input flake");
+
+    let (store, imported_state) = make_state(&ctx);
+    let imported =
+      ImportedLockedFlake::import_json(&ctx, &fetch_settings, &exported)
+        .expect("import locked flake");
+
+    let outputs = imported
+      .output_attrs(&settings, &imported_state)
+      .expect("get output attrs");
+    let answer = outputs
+      .get_attr(&fragment)
+      .expect("get fragment output")
+      .as_int()
+      .expect("read answer");
+    assert_eq!(answer, 42);
+    drop(store);
   }
 }
