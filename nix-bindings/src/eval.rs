@@ -381,17 +381,7 @@ impl EvalState {
       && path_str.starts_with("/nix/store/")
       && is_pure_eval()
     {
-      // SAFETY: context, state, and path are valid.
-      unsafe {
-        check_err(
-          self.context.as_ptr(),
-          sys::nix_eval_state_allow_path(
-            self.context.as_ptr(),
-            self.inner.as_ptr(),
-            path_c.as_ptr(),
-          ),
-        )?;
-      }
+      self.allow_store_path(path_str)?;
     }
 
     // SAFETY: context, state, and value are valid
@@ -407,6 +397,32 @@ impl EvalState {
       )?;
     }
     Ok(v)
+  }
+
+  /// Allow a canonical Nix store path in this evaluation state.
+  ///
+  /// This restores access to a previously resolved store path in a fresh
+  /// evaluator running with `restrict-eval`. It does not permit arbitrary
+  /// filesystem paths: Nix parses and validates the supplied store path.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if `path` is not a valid store path or Nix cannot add it
+  /// to this evaluation state's allowlist.
+  #[cfg(feature = "shim")]
+  pub fn allow_store_path(&self, path: &str) -> Result<()> {
+    let path_c = CString::new(path)?;
+    // SAFETY: context, state, and path are valid.
+    unsafe {
+      check_err(
+        self.context.as_ptr(),
+        sys::nix_eval_state_allow_path(
+          self.context.as_ptr(),
+          self.inner.as_ptr(),
+          path_c.as_ptr(),
+        ),
+      )
+    }
   }
 
   /// Create a Nix list value from a slice of values.
