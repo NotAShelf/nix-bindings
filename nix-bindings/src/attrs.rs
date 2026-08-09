@@ -2,7 +2,7 @@ use std::{ffi::CString, ptr::NonNull};
 
 use crate::{Error, Result, Value};
 
-impl Value<'_> {
+impl<'a> Value<'a> {
   /// Get an attribute by name.
   ///
   /// Returns the value associated with the given attribute name.
@@ -11,7 +11,7 @@ impl Value<'_> {
   ///
   /// Returns an error if the value is not an attribute set or the key
   /// does not exist.
-  pub fn get_attr(&self, key: &str) -> Result<Value<'_>> {
+  pub fn get_attr(&self, key: &str) -> Result<Value<'a>> {
     if self.value_type() != crate::ValueType::Attrs {
       return Err(Error::InvalidType {
         expected: "attrs",
@@ -313,6 +313,21 @@ mod tests {
 
     let result = attrs.get_attr("missing");
     assert!(result.is_err());
+  }
+
+  #[test]
+  #[serial]
+  fn test_get_attr_lifetime() {
+    let state = setup().build().expect("Failed to build state");
+    let attrs = state
+      .eval_from_string("{ foo = { bar = 42; }; }", "<eval>")
+      .expect("Failed to evaluate attrs");
+
+    let bar = {
+      let foo = attrs.get_attr("foo").expect("Failed to get foo");
+      foo.get_attr("bar").expect("Failed to get bar")
+    };
+    assert_eq!(bar.as_int().expect("Failed to get int"), 42);
   }
 
   #[test]

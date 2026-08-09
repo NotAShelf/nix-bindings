@@ -106,7 +106,7 @@ impl value_ops::NixValueRaw for Value<'_> {
   }
 }
 
-impl Value<'_> {
+impl<'a> Value<'a> {
   /// Force evaluation of this value.
   ///
   /// If the value is a thunk, this will evaluate it to its final form.
@@ -436,7 +436,7 @@ impl Value<'_> {
   /// # Errors
   ///
   /// Returns an error if this value is not a function or the call fails.
-  pub fn call(&self, arg: &Value<'_>) -> Result<Value<'_>> {
+  pub fn call(&self, arg: &Value<'_>) -> Result<Value<'a>> {
     let result = self.state.alloc_value()?;
     // SAFETY: context, state, function value, arg value, and result are valid
     unsafe {
@@ -459,7 +459,7 @@ impl Value<'_> {
   /// # Errors
   ///
   /// Returns an error if this value is not a function or the call fails.
-  pub fn call_multi(&self, args: &[&Value<'_>]) -> Result<Value<'_>> {
+  pub fn call_multi(&self, args: &[&Value<'_>]) -> Result<Value<'a>> {
     let result = self.state.alloc_value()?;
     let mut arg_ptrs: Vec<*mut sys::nix_value> =
       args.iter().map(|a| a.inner.as_ptr()).collect();
@@ -489,10 +489,10 @@ impl Value<'_> {
   /// # Errors
   ///
   /// Returns an error if the thunk cannot be created.
-  pub fn make_thunk<'a>(
-    fn_val: &'a Value<'a>,
-    arg: &'a Value<'a>,
-  ) -> Result<Value<'a>> {
+  pub fn make_thunk<'b>(
+    fn_val: &'b Value<'b>,
+    arg: &'b Value<'b>,
+  ) -> Result<Value<'b>> {
     let result = fn_val.state.alloc_value()?;
     // SAFETY: context and all value pointers are valid
     unsafe {
@@ -514,7 +514,7 @@ impl Value<'_> {
   /// # Errors
   ///
   /// Returns an error if the copy fails.
-  pub fn copy(&self) -> Result<Value<'_>> {
+  pub fn copy(&self) -> Result<Value<'a>> {
     let result = self.state.alloc_value()?;
     // SAFETY: context and both value pointers are valid
     unsafe {
@@ -709,5 +709,68 @@ impl fmt::Debug for Value<'_> {
       ValueType::Thunk => write!(f, "Value::Thunk(<thunk>)"),
       ValueType::External => write!(f, "Value::External(<external>)"),
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::sync::Arc;
+
+  use serial_test::serial;
+
+  use crate::{Context, EvalStateBuilder, Store};
+
+  fn setup() -> EvalStateBuilder {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store =
+      Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
+    EvalStateBuilder::new(&store).expect("Failed to create builder")
+  }
+
+  #[test]
+  #[serial]
+  fn test_call_lifetime() {
+    let state = setup().build().expect("Failed to build state");
+
+    let result = {
+      let func = state
+        .eval_from_string("foo: foo + 1", "<eval>")
+        .expect("Failed to evaluate func");
+
+      let foo = state.make_int(42).expect("Failed to make int value");
+      func.call(&foo).expect("Failed to call func")
+    };
+    assert_eq!(result.as_int().expect("Failed to get int value"), 43);
+  }
+
+  #[test]
+  #[serial]
+  fn test_call_multi_lifetime() {
+    let state = setup().build().expect("Failed to build state");
+
+    let result = {
+      let func = state
+        .eval_from_string("foo: bar: foo + bar", "<eval>")
+        .expect("Failed to evaluate func");
+
+      let foo = state.make_int(42).expect("Failed to make int value");
+      let bar = state.make_int(1).expect("Failed to make int value");
+      func.call_multi(&[&foo, &bar]).expect("Failed to call func")
+    };
+    assert_eq!(result.as_int().expect("Failed to get int value"), 43);
+  }
+
+  #[test]
+  #[serial]
+  fn test_copy_lifetime() {
+    let state = setup().build().expect("Failed to build state");
+
+    let bar = {
+      let foo = state
+        .eval_from_string("42", "<eval>")
+        .expect("Failed to evaluate func");
+      foo.copy().expect("Failed to copy value")
+    };
+    assert_eq!(bar.as_int().expect("Failed to get int value"), 42);
   }
 }

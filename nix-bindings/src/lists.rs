@@ -2,7 +2,7 @@ use std::ptr::NonNull;
 
 use crate::{Error, Result, Value, ValueType, sys};
 
-impl Value<'_> {
+impl<'a> Value<'a> {
   /// Check if this value is a list.
   ///
   /// # Example
@@ -88,7 +88,7 @@ impl Value<'_> {
   /// # Ok(())
   /// # }
   /// ```
-  pub fn list_get(&self, idx: usize) -> Result<Value<'_>> {
+  pub fn list_get(&self, idx: usize) -> Result<Value<'a>> {
     if !self.is_list() {
       return Err(Error::InvalidType {
         expected: "list",
@@ -284,6 +284,27 @@ mod tests {
         length: 3,
       })
     ));
+  }
+
+  #[test]
+  #[serial]
+  fn test_list_get_lifetime() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store =
+      Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
+    let state = EvalStateBuilder::new(&store)
+      .expect("Failed to create builder")
+      .build()
+      .expect("Failed to build state");
+
+    let first = {
+      let list = state
+        .eval_from_string("[ 42 ]", "<eval>")
+        .expect("Failed to evaluate list");
+
+      list.list_get(0).expect("Failed to get first element")
+    };
+    assert_eq!(first.as_int().expect("Failed to get int"), 42);
   }
 
   #[test]
