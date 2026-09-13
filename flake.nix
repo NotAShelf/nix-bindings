@@ -1,5 +1,5 @@
 {
-  inputs.nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+  inputs.nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.zst";
 
   outputs = {nixpkgs, ...}: let
     systems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin"];
