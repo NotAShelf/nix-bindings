@@ -3,7 +3,7 @@
   # Generally the policy is to use the version corresponding to `pkgs.nix`'s
   # in nixos-stable. Fortunately the C API does not move fast enough, so
   # there is a degree of forward-compatibility.
-  nixForBindings = pkgs.nixVersions.nix_2_34;
+  nixForBindings = pkgs.nixVersions.nix_2_35;
   inherit (pkgs) lib;
   inherit (pkgs.rustc) llvmPackages;
 in
@@ -28,23 +28,27 @@ in
       cargo-nextest
     ];
 
-    buildInputs = [
-      nixForBindings.dev
-    ] ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-      pkgs.glibc.dev
-    ];
+    buildInputs =
+      [
+        nixForBindings.dev
+      ]
+      ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+        pkgs.glibc.dev
+      ];
 
     env = let
       inherit (llvmPackages) llvm;
-    in {
-      RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-      LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+    in
+      {
+        RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+        LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
 
-      # `cargo-llvm-cov` reads these environment variables to find these binaries,
-      # which are needed to run the tests
-      LLVM_COV = "${llvm}/bin/llvm-cov";
-      LLVM_PROFDATA = "${llvm}/bin/llvm-profdata";
-    } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-      BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
-    };
+        # `cargo-llvm-cov` reads these environment variables to find these binaries,
+        # which are needed to run the tests
+        LLVM_COV = "${llvm}/bin/llvm-cov";
+        LLVM_PROFDATA = "${llvm}/bin/llvm-profdata";
+      }
+      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.glibc.dev}";
+      };
   }
