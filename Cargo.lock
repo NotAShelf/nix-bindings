@@ -205,7 +205,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "nix-bindings"
-version = "0.2347.8"
+version = "0.2352.0"
 dependencies = [
  "nix-bindings-sys",
  "serial_test",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "nix-bindings-sys"
-version = "0.2347.8"
+version = "0.2352.0"
 dependencies = [
  "bindgen",
  "cc",
