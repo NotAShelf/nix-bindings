@@ -7,23 +7,31 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
-      - "src/**"
-      - "tests/**"
+      - "nix-bindings/**"
+      - "nix-bindings-sys/**"
+      - "flake.nix"
+      - "flake.lock"
+      - "shell.nix"
       - ".github/workflows/test.yml"
   push:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
-      - "src/**"
-      - "tests/**"
+      - "nix-bindings/**"
+      - "nix-bindings-sys/**"
+      - "flake.nix"
+      - "flake.lock"
+      - "shell.nix"
       - ".github/workflows/test.yml"
 
 jobs:
   tests:
+    name: Tests (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
-        package: [nix-bindings-sys]
-    runs-on: ubuntu-latest
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout repository
@@ -33,10 +41,12 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run tests for ${{ matrix.package }}
-        run: |
-          # Give us cargo, Nix & friends from the devshell
-          eval "$(nix print-dev-env)"
-          set -x
+      # TODO: maybe enter shell once and run the commands in there...
+      - name: Build workspace and examples
+        run: nix develop --command cargo build --locked --workspace --all-features --all-targets
 
-          cargo nextest run -p ${{ matrix.package }}
+      - name: Run workspace tests
+        run: nix develop --command cargo nextest run --locked --workspace --all-features
+
+      - name: Run linked Nix library smoke test
+        run: nix develop --command cargo run --locked -p nix-bindings-sys --example version
