@@ -29,16 +29,16 @@ full = [
 ]
 
 expr     = [ "store", "nix-bindings-sys/expr" ]
-external = [ "store", "nix-bindings-sys/util" ]
+external = [ "expr" ]
 flake    = [ "expr", "nix-bindings-sys/flake" ]
-main     = [ "nix-bindings-sys/main" ]
+main     = [ "util", "nix-bindings-sys/main" ]
 primop   = [ "expr", "nix-bindings-sys/expr" ]
 shim     = [ "nix-bindings-sys/shim", "expr" ]
-store    = [ "nix-bindings-sys/store", "nix-bindings-sys/expr", "nix-bindings-sys/util" ]
+store    = [ "util", "nix-bindings-sys/store" ]
 util     = [ "nix-bindings-sys/util" ]
 
 [dependencies]
-nix-bindings-sys.workspace = true
+nix-bindings-sys = { default-features = false, workspace = true }
 
 [dev-dependencies]
 serial_test.workspace = true

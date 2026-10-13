@@ -2,15 +2,18 @@
 //!
 //! Re-exported at the crate root as [`crate::Error`] and [`crate::Result`].
 
-use std::{ffi::CStr, fmt};
+#[cfg(feature = "util")] use std::ffi::CStr;
+use std::fmt;
+#[cfg(feature = "util")]
+use std::panic::{self, AssertUnwindSafe};
 
-use crate::sys;
+#[cfg(feature = "util")] use crate::sys;
 
 /// Result type for Nix operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Error types for Nix operations.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {
   /// Unknown error from Nix C API.
   Unknown(String),
@@ -65,11 +68,36 @@ impl fmt::Display for Error {
   }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    match self {
+      Error::StringConversion(error) => Some(error),
+      _ => None,
+    }
+  }
+}
 
 impl From<std::ffi::NulError> for Error {
   fn from(e: std::ffi::NulError) -> Self {
     Error::StringConversion(e)
+  }
+}
+
+/// Run a callback without allowing a Rust unwind across the C ABI.
+#[cfg(feature = "util")]
+pub(crate) fn catch_callback<T>(f: impl FnOnce() -> T) -> Option<T> {
+  match panic::catch_unwind(AssertUnwindSafe(f)) {
+    Ok(value) => Some(value),
+    Err(payload) => {
+      // A custom panic payload may itself panic when destroyed. Only that
+      // secondary payload is leaked so its destructor cannot escape to C.
+      if let Err(payload) =
+        panic::catch_unwind(AssertUnwindSafe(|| drop(payload)))
+      {
+        std::mem::forget(payload);
+      }
+      None
+    },
   }
 }
 
@@ -81,7 +109,7 @@ impl From<std::ffi::NulError> for Error {
 /// # Safety
 ///
 /// `call` must invoke `callback` with a valid string pointer and length.
-#[cfg(feature = "store")]
+#[cfg(feature = "util")]
 pub(crate) unsafe fn string_from_callback<F>(call: F) -> Option<String>
 where
   F: FnOnce(sys::nix_get_string_callback, *mut std::os::raw::c_void),
@@ -98,7 +126,7 @@ where
 ///
 /// `call` must invoke `callback` with a valid string pointer and length when
 /// it returns [`sys::nix_err_NIX_OK`].
-#[cfg(feature = "store")]
+#[cfg(feature = "expr")]
 pub(crate) unsafe fn checked_string_from_callback<F>(
   ctx: *mut sys::nix_c_context,
   call: F,
@@ -118,23 +146,27 @@ where
   })
 }
 
-#[cfg(feature = "store")]
+#[cfg(feature = "util")]
 unsafe extern "C" fn collect_string(
   start: *const std::os::raw::c_char,
   n: std::os::raw::c_uint,
   user_data: *mut std::os::raw::c_void,
 ) {
-  let result = unsafe { &mut *(user_data as *mut Option<String>) };
-  if !start.is_null() {
-    let bytes =
-      unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
-    *result = std::str::from_utf8(bytes).ok().map(str::to_owned);
-  }
+  let _ = catch_callback(|| {
+    // SAFETY: user_data points to the live callback output; Nix supplies n
+    // readable bytes whenever start is non-null.
+    let result = unsafe { &mut *(user_data as *mut Option<String>) };
+    if !start.is_null() {
+      let bytes =
+        unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
+      *result = std::str::from_utf8(bytes).ok().map(str::to_owned);
+    }
+  });
 }
 
 /// Check a Nix error code and convert to `Result`, extracting the real
 /// error message from the context.
-#[cfg(feature = "store")]
+#[cfg(feature = "util")]
 pub(crate) fn check_err(
   ctx: *mut sys::nix_c_context,
   err: sys::nix_err,
@@ -155,24 +187,20 @@ pub(crate) fn check_err(
     }
   };
 
-  // For NIX_ERR_NIX_ERROR, also try to get the richer info message.
-  let detail = if err == sys::nix_err_NIX_ERR_NIX_ERROR {
+  // Both richer error accessors require NIX_ERR_NIX_ERROR.
+  let (detail, name) = if err == sys::nix_err_NIX_ERR_NIX_ERROR {
+    // SAFETY: ctx holds a Nix error, as required by both accessors.
     unsafe {
-      string_from_callback(|cb, ud| {
+      let detail = string_from_callback(|cb, ud| {
         sys::nix_err_info_msg(std::ptr::null_mut(), ctx, cb, ud);
-      })
+      });
+      let name = string_from_callback(|cb, ud| {
+        sys::nix_err_name(std::ptr::null_mut(), ctx, cb, ud);
+      });
+      (detail, name)
     }
   } else {
-    None
-  };
-
-  // Decorate with the symbolic error name (e.g. "NixError", "Key",
-  // "Overflow") when the API exposes one for this code. Improves
-  // diagnostics when the message itself is empty or generic.
-  let name = unsafe {
-    string_from_callback(|cb, ud| {
-      sys::nix_err_name(std::ptr::null_mut(), ctx, cb, ud);
-    })
+    (None, None)
   };
 
   let base_message = detail
@@ -207,7 +235,7 @@ pub(crate) fn check_err(
 /// Returns the parked context error when one is set, or [`Error::NullPointer`]
 /// when the pointer is null with no error recorded (a genuinely value-less
 /// null, such as an absent optional).
-#[cfg(feature = "store")]
+#[cfg(feature = "expr")]
 pub(crate) fn check_ptr<T>(
   ctx: *mut sys::nix_c_context,
   ptr: *mut T,
