@@ -3,19 +3,16 @@
 
 #![cfg(feature = "expr")]
 
-use std::{ffi::CString, path::Path, ptr::NonNull, sync::Arc};
-
-use crate::{
-  Context,
-  Error,
-  Result,
-  Store,
-  StorePath,
-  Value,
-  context::is_pure_eval,
-  error::check_err,
-  sys,
+use std::{
+  ffi::{CStr, CString},
+  path::Path,
+  ptr::NonNull,
+  sync::Arc,
 };
+
+use crate::{Context, Error, Result, Store, Value, error::check_err, sys};
+#[cfg(feature = "shim")]
+use crate::{StorePath, context::is_pure_eval};
 
 /// Builder for Nix evaluation state.
 ///
@@ -195,32 +192,34 @@ impl EvalState {
   pub fn eval_from_string(&self, expr: &str, path: &str) -> Result<Value<'_>> {
     let expr_c = CString::new(expr)?;
     let path_c = CString::new(path)?;
+    self.eval_from_cstr(&expr_c, &path_c)
+  }
 
-    // SAFETY: context and state are valid
-    let value_ptr = unsafe {
-      sys::nix_alloc_value(self.context.as_ptr(), self.inner.as_ptr())
-    };
-    if value_ptr.is_null() {
-      return Err(Error::NullPointer);
-    }
+  /// Evaluate an expression without copying its NUL-terminated inputs.
+  ///
+  /// `path` is the base directory used to resolve relative paths.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if value allocation or evaluation fails.
+  pub fn eval_from_cstr(&self, expr: &CStr, path: &CStr) -> Result<Value<'_>> {
+    let value = self.alloc_value()?;
 
-    // SAFETY: all pointers are valid
+    // SAFETY: context, state, expression, path, and value are valid
     unsafe {
       check_err(
         self.context.as_ptr(),
         sys::nix_expr_eval_from_string(
           self.context.as_ptr(),
           self.inner.as_ptr(),
-          expr_c.as_ptr(),
-          path_c.as_ptr(),
-          value_ptr,
+          expr.as_ptr(),
+          path.as_ptr(),
+          value.inner.as_ptr(),
         ),
       )?;
     }
 
-    let inner = NonNull::new(value_ptr).ok_or(Error::NullPointer)?;
-
-    Ok(Value { inner, state: self })
+    Ok(value)
   }
 
   /// Evaluate a Nix expression from a file.
@@ -360,7 +359,7 @@ impl EvalState {
   /// method automatically registers absolute paths via the shim's
   /// `nix_eval_state_allow_path` before constructing the value, mirroring
   /// what Nix's own fetch builtins do. Without `shim` you must arrange
-  /// for allowPath yourself, or [`is_pure_eval`] returns true.
+  /// for allowPath yourself when [`crate::is_pure_eval`] returns true.
   ///
   /// # Errors
   ///
@@ -646,7 +645,3 @@ impl Drop for EvalState {
     }
   }
 }
-
-// SAFETY: see crate-level "# Thread Safety" docs and the comment in
-// the original lib.rs Send impl.
-unsafe impl Send for EvalState {}
