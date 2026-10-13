@@ -16,12 +16,12 @@ targets             = [ "x86_64-unknown-linux-gnu" ]
 
 [features]
 default = [ "full" ]
-expr    = [  ]
-flake   = [  ]
+expr    = [ "store" ]
+flake   = [ "expr" ]
 full    = [ "store", "expr", "util", "flake", "main", "shim" ]
-main    = [  ]
+main    = [ "util" ]
 shim    = [ "store", "expr" ]
-store   = [  ]
+store   = [ "util" ]
 util    = [  ]
 
 [lib]
@@ -35,3 +35,47 @@ pkg-config.workspace      = true
 
 [dev-dependencies]
 serial_test.workspace = true
+
+[[test]]
+name              = "util"
+required-features = [ "util" ]
+
+[[test]]
+name              = "store"
+required-features = [ "store" ]
+
+[[test]]
+name              = "eval"
+required-features = [ "expr" ]
+
+[[test]]
+name              = "memory"
+required-features = [ "expr" ]
+
+[[test]]
+name              = "primop"
+required-features = [ "expr" ]
+
+[[test]]
+name              = "flake"
+required-features = [ "flake" ]
+
+[[example]]
+name              = "version"
+required-features = [ "util" ]
+
+[[example]]
+name              = "eval_basic"
+required-features = [ "expr" ]
+
+[[example]]
+name              = "eval_construct"
+required-features = [ "expr" ]
+
+[[example]]
+name              = "eval_function"
+required-features = [ "expr" ]
+
+[[example]]
+name              = "flake_basic"
+required-features = [ "flake" ]
