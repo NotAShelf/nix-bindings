@@ -21,12 +21,10 @@ Cargo feature:
 
 [crate documentation]: https://notashelf.github.io/nix-bindings/nix_bindings/index.html
 
-A few key types are provided at the crate root and are gated by the `store` and
-`expr` features (both included by default). Namely: `Context`, `EvalState`,
-`EvalStateBuilder`, `Store`, `StorePath`, `Derivation`, `Value` and verbosity
-may be used to manage C API context lifetime, expression evaluation, store
-handle, derivation from JSON and Nix value with type-safe accessors
-specifically. See [crate documentation] for more details.
+`Context`, version information, and verbosity are available with `util`.
+The `main` feature adds plugin initialization and log-format configuration.
+Store types require `store`; evaluation and value types require `expr`.
+All are included by default. See [crate documentation] for their APIs.
 
 ## Usage
 
@@ -91,20 +89,14 @@ assert_eq!(result.as_int()?, 42);
 
 ## Thread safety
 
-All public wrapper types (`Context`, `EvalState`, `Store`, `StorePath`,
-`Derivation`, `Value`, primop and flake wrappers) are `Send` but not `Sync`. You
-can move them across threads, but you cannot share `&T` across threads.
+Contexts and their dependent wrappers are neither `Send` nor `Sync`.
+Construct, use, and drop them on the same thread. `Arc<Context>` shares
+ownership within that thread; it does not make concurrent access safe.
 
-The reason is `nix_c_context`: every `nix_*` call mutates a per-context error
-buffer, so sharing `&Context` would race on that buffer. The crate makes the
-public surface `!Sync` by construction so this is a compile error rather than a
-runtime data race.
-
-`Arc<Context>` is the documented lifetime-sharing pattern. It is for shared
-_ownership_, not shared _access_: if you `Arc::clone` a `Context` and move both
-halves to different threads, you must drop all but one half before any thread
-touches a wrapper that holds it. The full contract is in the `# Thread Safety`
-section at the top of `src/lib.rs`.
+Every C API call can mutate the context's error buffer, and evaluator threads
+must satisfy Nix's garbage-collector registration requirements. A mutex does
+not remove those requirements. See the `# Thread Safety` section in
+`src/lib.rs` before integrating with worker threads.
 
 ## Testing
 
