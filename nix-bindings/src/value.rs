@@ -304,12 +304,23 @@ impl<'a> Value<'a> {
       std::slice::from_raw_parts(buffer_start.cast::<u8>(), buffer_size)
     };
     let string = std::str::from_utf8(bytes)
-      .map_err(|_| Error::Unknown("Invalid UTF-8 in string".to_string()))?
-      .to_owned();
+      .map(str::to_owned)
+      .map_err(|_| Error::Unknown("Invalid UTF-8 in string".to_string()));
 
     unsafe { sys::nix_realised_string_free(realised_str) };
 
-    Ok(string)
+    string
+  }
+
+  /// Read a string without realising its store-path context.
+  ///
+  /// The result may contain unresolved placeholders.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error on evaluation failure, type mismatch, or invalid UTF-8.
+  pub fn as_raw_string(&self) -> Result<String> {
+    value_ops::NixValueOps::as_raw_string(self)
   }
 
   /// Convert this value to a string and return its store-path context.
@@ -461,8 +472,23 @@ impl<'a> Value<'a> {
   /// Returns an error if this value is not a function or the call fails.
   pub fn call_multi(&self, args: &[&Value<'_>]) -> Result<Value<'a>> {
     let result = self.state.alloc_value()?;
-    let mut arg_ptrs: Vec<*mut sys::nix_value> =
-      args.iter().map(|a| a.inner.as_ptr()).collect();
+    // Eight pointers keep small curried calls allocation-free with a bounded
+    // stack cost; larger argument lists retain the heap-backed path.
+    let mut inline = [std::ptr::null_mut(); 8];
+    let mut heap;
+    let arg_ptrs = if args.len() <= inline.len() {
+      let slots = &mut inline[..args.len()];
+      for (slot, arg) in slots.iter_mut().zip(args) {
+        *slot = arg.inner.as_ptr();
+      }
+      slots
+    } else {
+      heap = args
+        .iter()
+        .map(|arg| arg.inner.as_ptr())
+        .collect::<Vec<_>>();
+      heap.as_mut_slice()
+    };
     // SAFETY: context, state, fn, args array, and result are valid
     unsafe {
       check_err(
