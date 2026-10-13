@@ -41,6 +41,7 @@ fn main() {
 
   let mut builder = bindgen::Builder::default()
     .header("include/wrapper.h")
+    .allowlist_file(".*nix_api_.*\\.h")
     .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
     .formatter(bindgen::Formatter::Rustfmt)
     .rustfmt_configuration_file(std::fs::canonicalize(".rustfmt.toml").ok())
@@ -161,14 +162,12 @@ fn main() {
     // in a Nix dev shell) and surface them as `-I` to cc-rs. Then blank the
     // var for the child so the cc wrapper doesn't apply them a second time.
     if let Ok(nix_cflags) = env::var("NIX_CFLAGS_COMPILE") {
-      let parts: Vec<&str> = nix_cflags.split_whitespace().collect();
-      let mut i = 0;
-      while i < parts.len() {
-        if parts[i] == "-isystem" && i + 1 < parts.len() {
-          cc_build.include(parts[i + 1]);
-          i += 2;
-        } else {
-          i += 1;
+      let mut parts = nix_cflags.split_whitespace();
+      while let Some(part) = parts.next() {
+        if part == "-isystem"
+          && let Some(path) = parts.next()
+        {
+          cc_build.include(path);
         }
       }
     }
