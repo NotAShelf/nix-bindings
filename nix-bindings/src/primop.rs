@@ -54,7 +54,16 @@ use std::{
   sync::{Arc, Mutex, OnceLock},
 };
 
-use crate::{Context, Error, Result, ValueType, check_err, sys};
+use crate::{
+  Context,
+  Error,
+  Result,
+  ValueType,
+  check_err,
+  check_ptr,
+  error::catch_callback,
+  sys,
+};
 
 type PrimOpFn =
   dyn Fn(&[PrimOpArg<'_>], &mut PrimOpRet<'_>) -> Result<()> + Send + Sync;
@@ -83,75 +92,75 @@ unsafe extern "C" fn trampoline(
   args: *mut *mut sys::nix_value,
   ret: *mut sys::nix_value,
 ) {
-  let data = unsafe { &*(user_data as *const ClosureData) };
-
-  // Build arg wrappers.
-  //
-  // The pointers are borrowed from Nix and must NOT be
-  // decreffed by our code. When arity is 0, `args` may be null. Passing a null
-  // pointer to slice::from_raw_parts (even with len=0) produces a dangling
-  // reference which violates Rust's validity invariant for references.
-  let arg_wrappers: Vec<PrimOpArg<'_>> = if data.arity == 0 {
-    Vec::new()
-  } else {
-    let arg_slice = unsafe { std::slice::from_raw_parts(args, data.arity) };
-    arg_slice
+  let completed = catch_callback(|| {
+    // SAFETY: Nix supplies the ClosureData and argument array registered by
+    // PrimOp::new. A zero-arity callback may receive a null args pointer.
+    let data = unsafe { &*(user_data as *const ClosureData) };
+    let arg_slice = if data.arity == 0 {
+      &[][..]
+    } else {
+      unsafe { std::slice::from_raw_parts(args, data.arity) }
+    };
+    let arg_wrappers: Vec<PrimOpArg<'_>> = arg_slice
       .iter()
-      .map(|&p| {
+      .map(|&inner| {
         PrimOpArg {
-          inner: p,
+          inner,
           ctx: context,
           state,
           _phantom: PhantomData,
         }
       })
-      .collect()
-  };
+      .collect();
+    let mut ret_wrapper = PrimOpRet {
+      inner: ret,
+      ctx: context,
+      state,
+      written: false,
+      _phantom: PhantomData,
+    };
 
-  let mut ret_wrapper = PrimOpRet {
-    inner: ret,
-    ctx: context,
-    state,
-    written: false,
-    _phantom: PhantomData,
-  };
-
-  let result = panic::catch_unwind(AssertUnwindSafe(|| {
-    (data.f)(&arg_wrappers, &mut ret_wrapper)
-  }));
-
-  let err_msg = match result {
-    Ok(Ok(())) => {
-      if ret_wrapper.written {
-        return;
-      }
-      "primop returned Ok(()) without calling a set_* method on the return slot"
-        .to_string()
-    },
-    Ok(Err(e)) => format!("primop error: {e}"),
-    Err(payload) => {
-      // Try to pull a useful message out of the panic payload before
-      // giving up. catch_unwind boxes the payload; the standard panics
-      // produce &str or String.
-      let detail = if let Some(s) = payload.downcast_ref::<&'static str>() {
-        (*s).to_owned()
-      } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-      } else {
-        "unknown panic payload".to_owned()
-      };
-      format!("primop panicked: {detail}")
-    },
-  };
-
-  let msg_c = CString::new(err_msg)
-    .unwrap_or_else(|_| CString::new("primop error").unwrap());
-  unsafe {
-    sys::nix_set_err_msg(
-      context,
-      sys::nix_err_NIX_ERR_NIX_ERROR,
-      msg_c.as_ptr(),
-    );
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+      (data.f)(&arg_wrappers, &mut ret_wrapper)
+    }));
+    let error = match result {
+      Ok(Ok(())) if ret_wrapper.written => return,
+      Ok(Ok(())) => {
+        c"primop returned Ok(()) without calling a set_* method on the return slot"
+          .to_owned()
+      },
+      Ok(Err(error)) => CString::new(format!("primop error: {error}"))
+        .unwrap_or_else(|_| c"primop error (message contains NUL)".to_owned()),
+      Err(payload) => {
+        let detail = if let Some(message) = payload.downcast_ref::<&'static str>() {
+          (*message).to_owned()
+        } else if let Some(message) = payload.downcast_ref::<String>() {
+          message.clone()
+        } else {
+          "unknown panic payload".to_owned()
+        };
+        CString::new(format!("primop panicked: {detail}"))
+          .unwrap_or_else(|_| c"primop panicked (message contains NUL)".to_owned())
+      },
+    };
+    // SAFETY: Nix supplies a live error context; the C API copies the message.
+    unsafe {
+      sys::nix_set_err_msg(
+        context,
+        sys::nix_err_NIX_ERR_UNKNOWN,
+        error.as_ptr(),
+      );
+    }
+  });
+  if completed.is_none() {
+    // No allocation or Rust destructor runs outside the unwind boundary.
+    unsafe {
+      sys::nix_set_err_msg(
+        context,
+        sys::nix_err_NIX_ERR_UNKNOWN,
+        c"primop panicked".as_ptr(),
+      );
+    }
   }
 }
 
@@ -163,8 +172,10 @@ unsafe extern "C" fn drop_closure_finalizer(
   _obj: *mut c_void,
   cd: *mut c_void,
 ) {
-  // Reconstruct and immediately drop the Box, running the destructor.
-  let _ = unsafe { Box::from_raw(cd as *mut ClosureData) };
+  let _ = catch_callback(|| {
+    // SAFETY: cd is the unique ClosureData allocation registered by new.
+    drop(unsafe { Box::from_raw(cd.cast::<ClosureData>()) });
+  });
 }
 
 // The shared value-access trait lives at the crate root as
@@ -891,6 +902,43 @@ impl<'a> ArgAttrs<'a> {
     })
   }
 
+  /// Get an attribute without forcing its value.
+  ///
+  /// The attribute set is already forced by [`PrimOpArg::as_attrs`] or
+  /// [`PrimOpValue::as_attrs`]. The returned value owns a GC reference,
+  /// released on drop, and cannot outlive the callback frame.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Error::KeyNotFound`] for a missing key, or an error if the
+  /// key contains an interior NUL byte or the lookup fails.
+  pub fn get_lazy(&self, key: &str) -> Result<PrimOpValue<'a>> {
+    let key_c = CString::new(key)?;
+    // SAFETY: this wrapper borrows an evaluated attribute set and live
+    // callback context/state. Nix returns an owned reference to its member.
+    let inner = unsafe {
+      sys::nix_get_attr_byname_lazy(
+        self.ctx,
+        self.inner,
+        self.state,
+        key_c.as_ptr(),
+      )
+    };
+    let inner = match check_ptr(self.ctx, inner) {
+      Ok(inner) => inner,
+      Err(Error::KeyNotFound(_)) => {
+        return Err(Error::KeyNotFound(key.to_owned()));
+      },
+      Err(error) => return Err(error),
+    };
+    Ok(PrimOpValue {
+      inner:    inner.as_ptr(),
+      ctx:      self.ctx,
+      state:    self.state,
+      _phantom: PhantomData,
+    })
+  }
+
   /// Check if an attribute exists.
   ///
   /// # Errors
@@ -1000,6 +1048,40 @@ impl<'a> ArgList<'a> {
     })
   }
 
+  /// Get an element without forcing its value.
+  ///
+  /// The list is already forced by [`PrimOpArg::as_list`] or
+  /// [`PrimOpValue::as_list`]. The returned value owns a GC reference,
+  /// released on drop, and cannot outlive the callback frame.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Error::IndexOutOfBounds`] if `index >= self.len()`, or an
+  /// error if the lookup fails.
+  pub fn get_lazy(&self, index: usize) -> Result<PrimOpValue<'a>> {
+    let length = self.len();
+    if index >= length {
+      return Err(Error::IndexOutOfBounds { index, length });
+    }
+    // SAFETY: the list is evaluated and the index is below its C unsigned
+    // length, so the cast is lossless. The callback keeps context/state live.
+    let inner = unsafe {
+      sys::nix_get_list_byidx_lazy(
+        self.ctx,
+        self.inner,
+        self.state,
+        index as std::os::raw::c_uint,
+      )
+    };
+    let inner = check_ptr(self.ctx, inner)?.as_ptr();
+    Ok(PrimOpValue {
+      inner,
+      ctx: self.ctx,
+      state: self.state,
+      _phantom: PhantomData,
+    })
+  }
+
   /// Return the number of elements in this list.
   #[must_use]
   pub fn len(&self) -> usize {
@@ -1037,16 +1119,6 @@ pub struct PrimOp {
 /// [`PrimOp::register`].  Used to fail loudly when the same name is offered
 /// twice; the Nix C API silently accepts that today.
 static REGISTERED_PRIMOPS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
-// SAFETY: `PrimOp` owns its GC-allocated `*mut sys::PrimOp` until it is
-// either consumed by `register` or `into_value`, or released by `Drop`.
-// The GC-managed object itself is safe to hand off to another thread;
-// the `ClosureData` it points at is reachable only via the GC pointer.
-// `Arc<Context>` keeps the context alive on the destination thread.
-//
-// `Sync` is NOT implemented: `register` and `into_value` both mutate
-// state through `Context`'s racy error buffer.
-unsafe impl Send for PrimOp {}
 
 impl PrimOp {
   /// Create a new primop backed by the given Rust closure.

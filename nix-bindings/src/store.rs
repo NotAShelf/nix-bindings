@@ -1,12 +1,12 @@
 use std::{
   ffi::{CStr, CString},
   fmt,
-  panic::{self, AssertUnwindSafe},
   ptr::NonNull,
   sync::Arc,
 };
 
 use super::{Context, Error, Result, check_err, string_from_callback, sys};
+use crate::error::catch_callback;
 
 /// Options for [`Store::copy_path`].
 ///
@@ -244,16 +244,6 @@ impl Drop for StorePath {
   }
 }
 
-// SAFETY: `StorePath` owns its `*mut sys::StorePath` outright; the C
-// object has no thread affinity. Accessor methods route through
-// `Arc<Context>` which the move carries along. The caller is
-// responsible for not keeping a cloned `Arc<Context>` live on the
-// source thread (see the `# Thread Safety` section in the crate root).
-//
-// `Sync` is NOT implemented: name/hash accessors touch the shared
-// context error buffer; concurrent `&StorePath` reads would race.
-unsafe impl Send for StorePath {}
-
 impl fmt::Debug for StorePath {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let name = self.name().unwrap_or_else(|_| "<unknown>".into());
@@ -266,7 +256,7 @@ impl fmt::Debug for StorePath {
 ///
 /// The Nix C API does not expose a store-directory-aware print function;
 /// without a [`Store`] handle there is no way to recover the full path. Use
-/// [`Store::print_path`] (requires the `shim` feature) when you need the
+/// `Store::print_path` (requires the `shim` feature) when you need the
 /// canonical form.
 impl fmt::Display for StorePath {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -416,16 +406,6 @@ impl Drop for Derivation {
   }
 }
 
-// SAFETY: `Derivation` owns its `*mut sys::nix_derivation` outright and
-// keeps the context alive through `Arc<Context>`. Same move-only
-// contract as `StorePath`: source thread must not retain an aliased
-// `Arc<Context>` and call into the C API concurrently.
-//
-// `Sync` is NOT implemented: `to_json`, `add_to_store`, and
-// `from_store_path` write through the context error buffer that
-// `&Derivation` shares with every other wrapper.
-unsafe impl Send for Derivation {}
-
 impl fmt::Debug for Derivation {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.debug_struct("Derivation").finish_non_exhaustive()
@@ -548,7 +528,7 @@ impl Store {
       outname: *const std::os::raw::c_char,
       out: *const sys::StorePath,
     ) {
-      let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+      let _ = catch_callback(|| {
         let data = unsafe { &mut *(userdata as *mut Userdata) };
         let (outputs, context) = data;
 
@@ -568,7 +548,7 @@ impl Store {
             }));
           }
         }
-      }));
+      });
     }
 
     let mut userdata: Userdata = (Vec::new(), Arc::clone(&self._context));
@@ -801,7 +781,7 @@ impl Store {
       userdata: *mut std::os::raw::c_void,
       sp: *const sys::StorePath,
     ) {
-      let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+      let _ = catch_callback(|| {
         let data = unsafe { &mut *(userdata as *mut Userdata<'_>) };
         let (cb, ctx) = data;
 
@@ -815,7 +795,7 @@ impl Store {
             cb(&p);
           }
         }
-      }));
+      });
     }
 
     let mut userdata: Userdata<'_> =
@@ -1011,16 +991,6 @@ impl Drop for Store {
     }
   }
 }
-
-// SAFETY: `Store` owns its `*mut sys::Store` and keeps the context
-// alive through `Arc<Context>`. The Nix store handle is documented as
-// safe to move between threads provided no other thread is currently
-// driving it. Same `Arc<Context>` aliasing caveat as `StorePath` and
-// `Derivation` above.
-//
-// `Sync` is NOT implemented: every accessor (`uri`, `realize`,
-// `copy_path`, ...) writes through the shared context error buffer.
-unsafe impl Send for Store {}
 
 impl fmt::Debug for Store {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

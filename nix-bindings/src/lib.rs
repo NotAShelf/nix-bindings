@@ -1,7 +1,7 @@
 #![warn(missing_docs)]
 // The crate intentionally uses `Arc<Context>` for shared-ownership
-// lifetime extension within a single thread. `Context` is `Send` but
-// not `Sync`, which trips clippy's `arc_with_non_send_sync` lint on
+// lifetime extension within a single thread. `Context` is neither `Send`
+// nor `Sync`, which trips clippy's `arc_with_non_send_sync` lint on
 // every `Arc::new(Context::new()?)` in the test suite even though the
 // pattern is the documented one. See the crate-level `# Thread Safety`
 // section.
@@ -14,7 +14,7 @@
 //! # Quick Start
 //!
 //! ```no_run
-//! #[cfg(feature = "store")]
+//! #[cfg(feature = "expr")]
 //! {
 //!   use std::sync::Arc;
 //!
@@ -35,55 +35,20 @@
 //!
 //! # Thread Safety
 //!
-//! The underlying Nix C API stores per-call error state on
-//! [`Context`]. Every C entry point that takes a `nix_c_context *`
-//! rewrites that buffer, so two threads sharing a [`Context`]
-//! concurrently race on it. The C++ evaluator is also not designed for
-//! concurrent mutation from multiple threads.
+//! Nix contexts and wrappers backed by them are neither `Send` nor `Sync`.
+//! Construct, use, and drop them on the same thread. Per-call error buffers
+//! are mutable, evaluator state is not safe for concurrent mutation, and
+//! evaluator use requires Nix's garbage-collector thread registration.
 //!
-//! To make this hard to misuse, every wrapper in this crate is **`Send`
-//! but not `Sync`**:
+//! `Arc<Context>` extends ownership within that thread; it does not permit
+//! sending a context or a dependent wrapper to another thread. A `Mutex`
+//! does not remove this restriction. To do Nix work on a worker thread,
+//! initialize and retain the wrappers there, and send only ordinary Rust
+//! input and output data across threads. Do not assume independent contexts
+//! isolate process-global settings or register additional evaluator threads.
 //!
-//! | Trait   | What it means                                     | Allowed |
-//! |---------|---------------------------------------------------|---------|
-//! | `Send`  | Move ownership of a value to another thread       | yes     |
-//! | `!Sync` | Share `&T` with another thread (incl. via `Arc`)  | no      |
-//!
-//! In practice that gives you three usage patterns:
-//!
-//! 1. **Single-threaded.** The common case. Build [`Context`], [`Store`],
-//!    [`EvalState`] on one thread and stay there. Nothing extra to do.
-//! 2. **Move to a worker.** Build the wrappers on the main thread,
-//!    `std::thread::spawn` and move them in. The destination thread becomes the
-//!    new sole owner.
-//! 3. **Concurrent access.** Wrap the [`Context`] (or higher-level wrapper) in
-//!    `Arc<Mutex<_>>` yourself. The bindings will not do this for you because
-//!    most users do not need it, and the lock would hide the underlying
-//!    single-threaded contract.
-//!
-//! ## A note on `Arc<Context>`
-//!
-//! [`Store`], [`EvalState`], and the flake/primop/external types hold
-//! `Arc<Context>` so the C context lives as long as any wrapper that
-//! references it. Because [`Context`] is not `Sync`, `Arc<Context>` is
-//! not `Send` by Rust's auto-traits. The wrappers nonetheless implement
-//! `Send` through an `unsafe impl`. The unsafe assertion is: *when you
-//! move a wrapper across threads, no other thread retains an alias to
-//! the same `Arc<Context>` that it will continue to call into.*
-//!
-//! Concretely: do not clone `Arc<Context>`, build two stores from it,
-//! send one store to thread B, and keep using the other from thread A.
-//! That is a data race the compiler cannot catch. Either move both
-//! wrappers together, or put a `Mutex` in front of [`Context`].
-//!
-//! ## Callback-scoped types
-//!
-//! Inside a primop callback the trampoline hands you wrappers
-//! ([`primop::PrimOpArg`], [`primop::PrimOpRet`], [`primop::PrimOpValue`],
-//! [`primop::ArgAttrs`], [`primop::ArgList`]) that borrow raw pointers
-//! valid only for that one call. They are neither `Send` nor `Sync` by
-//! construction; do not stash them in a thread-local or send them off
-//! the trampoline.
+//! Primop callback arguments and return values borrow pointers valid only
+//! for the current callback. They must not escape that call.
 //!
 //! # Value Formatting
 //!
@@ -123,29 +88,24 @@
 /// safe, high-level APIs provided by this crate. Use at your own risk.
 #[doc(hidden)]
 pub mod sys {
-  pub use nix_bindings_sys::*;
+  #[cfg(feature = "util")] pub use nix_bindings_sys::*;
 }
 
 mod error;
+#[cfg(feature = "expr")] pub(crate) use error::check_ptr;
 pub use error::{Error, Result};
-// Crate-internal re-exports so the legacy `crate::check_err` /
-// `crate::string_from_callback` paths in the module bodies keep working
-// without each module having to update its imports.
+// Shared FFI helpers used by the higher-level wrappers.
 #[cfg(feature = "store")]
-pub(crate) use error::{
-  check_err,
-  check_ptr,
-  checked_string_from_callback,
-  string_from_callback,
-};
+pub(crate) use error::{check_err, string_from_callback};
 
-#[cfg(feature = "store")] mod context;
-#[cfg(feature = "store")]
-pub use context::{Context, Verbosity, is_pure_eval, nix_version};
+#[cfg(feature = "util")] mod context;
+#[cfg(feature = "expr")] pub use context::is_pure_eval;
+#[cfg(feature = "util")]
+pub use context::{Context, Verbosity, nix_version};
 
 #[cfg(feature = "store")] mod store;
 #[cfg(feature = "store")]
-pub use store::{Derivation, Store, StorePath};
+pub use store::{CopyPathOptions, Derivation, Store, StorePath};
 
 #[cfg(feature = "expr")] mod attrs;
 #[cfg(feature = "expr")] mod eval;
@@ -153,8 +113,10 @@ pub use store::{Derivation, Store, StorePath};
 #[cfg(feature = "expr")] mod value;
 #[cfg(feature = "expr")] mod value_ops;
 
+#[cfg(feature = "expr")] pub use attrs::AttrIterator;
 #[cfg(feature = "expr")]
 pub use eval::{EvalState, EvalStateBuilder};
+#[cfg(feature = "expr")] pub use lists::ListIterator;
 #[cfg(feature = "expr")] pub use value::{Value, ValueType};
 #[cfg(feature = "expr")] pub use value_ops::NixValueOps;
 
@@ -166,7 +128,7 @@ pub use eval::{EvalState, EvalStateBuilder};
 mod tests {
   #[cfg(feature = "expr")] use std::sync::Arc;
 
-  #[cfg(feature = "expr")] use serial_test::serial;
+  #[cfg(feature = "store")] use serial_test::serial;
 
   #[cfg(feature = "store")] use super::*;
 

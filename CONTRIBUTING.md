@@ -32,9 +32,9 @@ disallowed unless appropriate reasoning is provided:
 - Every `unsafe extern "C" fn` wraps its body in
   `panic::catch_unwind(AssertUnwindSafe(...))`. Panicking across the FFI
   boundary is UB.
-- The public API surface is `Send`-only, never `Sync`. The `nix_c_context`
-  error buffer is mutated on every call, so sharing `&T` across threads would
-  race. New wrapper types follow the same rule.
+- Context-backed wrappers are neither `Send` nor `Sync`. The `nix_c_context`
+  error buffer is mutated on every call; independently moved wrappers may
+  still alias it. New wrappers must preserve same-thread ownership.
 - C++ shims use the upstream `nix_api_*_internal.h` headers and the
   `NIXC_CATCH_ERRS` macro. Do not redeclare upstream structs and do not let
   C++ exceptions escape.
