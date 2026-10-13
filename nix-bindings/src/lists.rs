@@ -123,6 +123,39 @@ impl<'a> Value<'a> {
     })
   }
 
+  /// Retrieve a list element without evaluating it.
+  ///
+  /// Forces the containing list, not its elements.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error on evaluation failure, type mismatch, or an invalid
+  /// index.
+  pub fn list_get_lazy(&self, idx: usize) -> Result<Value<'a>> {
+    self.force_shared()?;
+    let length = self.list_len()?;
+    if idx >= length {
+      return Err(Error::IndexOutOfBounds { index: idx, length });
+    }
+    // SAFETY: the container is evaluated and idx is below its C unsigned
+    // length, so the cast is lossless. Value::drop releases the returned ref.
+    let inner = unsafe {
+      crate::check_ptr(
+        self.state.context.as_ptr(),
+        sys::nix_get_list_byidx_lazy(
+          self.state.context.as_ptr(),
+          self.inner.as_ptr(),
+          self.state.as_ptr(),
+          idx as std::os::raw::c_uint,
+        ),
+      )?
+    };
+    Ok(Value {
+      inner,
+      state: self.state,
+    })
+  }
+
   /// Create an iterator over the elements of this list.
   ///
   /// # Errors
