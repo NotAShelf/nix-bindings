@@ -10,10 +10,10 @@ license       = "MIT"
 readme        = true
 repository    = "https://github.com/notashelf/nix-bindings"
 rust-version  = "1.95.0"
-version       = "0.2352.0"
+version       = "0.2353.0"
 
 [workspace.dependencies]
-nix-bindings-sys = { default-features = false, path = "./nix-bindings-sys", version = "0.2352.0" }
+nix-bindings-sys = { default-features = false, path = "./nix-bindings-sys", version = "0.2353.0" }
 
 bindgen         = { default-features = false, features = [ "logging", "runtime" ], version = "0.73.2" }
 cc              = "1.4.6"
