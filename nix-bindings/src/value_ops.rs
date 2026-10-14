@@ -33,11 +33,9 @@ pub(crate) use sealed::NixValueRaw;
 
 /// Read access to a Nix value.
 ///
-/// Implemented by [`Value`](crate::Value),
-/// [`primop::PrimOpArg`](crate::primop::PrimOpArg), and
-/// [`primop::PrimOpValue`](crate::primop::PrimOpValue). All accessors force
-/// the value first, mirroring `nix-instantiate`-style semantics: a lazy
-/// attribute that resolves to an int is reported as an int, not a thunk.
+/// Implemented by [`Value`](crate::Value) and, with the `primop` feature,
+/// `primop::PrimOpArg` and `primop::PrimOpValue`. The `as_*` accessors force
+/// the value first; `value_type` inspects it without forcing.
 pub trait NixValueOps: sealed::NixValueRaw {
   /// Return the [`ValueType`] of this value.
   ///
@@ -65,6 +63,52 @@ pub trait NixValueOps: sealed::NixValueRaw {
           self.raw_inner(),
         ),
       )
+    }
+  }
+
+  /// Force this value and all nested values.
+  ///
+  /// Recursive structures can overflow the evaluator's stack.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if evaluation fails.
+  fn force_deep(&self) -> Result<()> {
+    // SAFETY: the sealed wrapper keeps context, state, and value alive.
+    unsafe {
+      check_err(
+        self.raw_ctx(),
+        sys::nix_value_force_deep(
+          self.raw_ctx(),
+          self.raw_state(),
+          self.raw_inner(),
+        ),
+      )
+    }
+  }
+
+  /// Read the string without realising its store-path context.
+  ///
+  /// The result may contain unresolved placeholders. Use `as_string` when
+  /// the result must contain realised store paths.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error on evaluation failure, type mismatch, or invalid UTF-8.
+  fn as_raw_string(&self) -> Result<String> {
+    self.force()?;
+    let actual = self.value_type();
+    if actual != ValueType::String {
+      return Err(Error::InvalidType {
+        expected: "string",
+        actual:   actual.to_string(),
+      });
+    }
+    // SAFETY: Nix calls the string callback synchronously with valid bytes.
+    unsafe {
+      crate::error::checked_string_from_callback(self.raw_ctx(), |cb, data| {
+        sys::nix_get_string(self.raw_ctx(), self.raw_inner(), cb, data)
+      })
     }
   }
 
@@ -166,11 +210,11 @@ pub trait NixValueOps: sealed::NixValueRaw {
       std::slice::from_raw_parts(buffer_start.cast::<u8>(), buffer_size)
     };
     let s = std::str::from_utf8(bytes)
-      .map_err(|_| Error::Unknown("Invalid UTF-8 in string".into()))?
-      .to_owned();
+      .map(str::to_owned)
+      .map_err(|_| Error::Unknown("Invalid UTF-8 in string".into()));
 
     unsafe { sys::nix_realised_string_free(realised_str) };
-    Ok(s)
+    s
   }
 
   /// Extract as a filesystem-path string.  Forces the value first.

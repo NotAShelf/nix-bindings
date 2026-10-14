@@ -158,6 +158,15 @@ communication channels.
 This also means that not all CLI features are exposed. Some advanced or
 experimental features may require additional or upstreaming work.
 
+### Lix Support
+
+[Lix]: https://lix.systems
+
+[Lix] is **not supported**. This is due to their removal of the C API (which
+those bindings are for) and the current lack of a stable API to replace it. As
+far I am aware Lix is already working on providing a Rust interface for
+developers, at which point those bindings would be obsolete.
+
 ## License
 
 See [LICENSE](./LICENSE) for details.
