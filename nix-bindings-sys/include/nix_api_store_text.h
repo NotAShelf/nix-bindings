@@ -52,6 +52,21 @@ nix_err nix_store_path_to_string(nix_c_context *context, Store *store,
                                  nix_get_string_callback callback,
                                  void *user_data);
 
+/**
+ * @brief Register a store path as a temporary GC root.
+ *
+ * Calls `store->addTempRoot(path)`. The root lasts until the process
+ * exits, or for a daemon store, until the daemon connection that carried
+ * the request closes.
+ *
+ * @param[out] context  Optional. Stores error information.
+ * @param[in]  store    Nix store reference.
+ * @param[in]  path     Store path to protect from garbage collection.
+ * @return NIX_OK on success, otherwise a nix_err describing the failure.
+ */
+nix_err nix_store_add_temp_root(nix_c_context *context, Store *store,
+                                const StorePath *path);
+
 #ifdef __cplusplus
 }
 #endif

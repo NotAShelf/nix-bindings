@@ -74,3 +74,20 @@ nix_err nix_store_path_to_string(nix_c_context *context, Store *store,
   }
   NIXC_CATCH_ERRS
 }
+
+nix_err nix_store_add_temp_root(nix_c_context *context, Store *store,
+                                const StorePath *path) {
+  if (context)
+    context->last_err_code = NIX_OK;
+
+  if (store == nullptr)
+    return nix_set_err_msg(context, NIX_ERR_UNKNOWN, "store is null");
+  if (path == nullptr)
+    return nix_set_err_msg(context, NIX_ERR_UNKNOWN, "path is null");
+
+  try {
+    store->ptr->addTempRoot(path->path);
+    return NIX_OK;
+  }
+  NIXC_CATCH_ERRS
+}
