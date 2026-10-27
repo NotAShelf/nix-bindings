@@ -1001,6 +1001,28 @@ impl Store {
   pub fn add_text_to_store(&self, name: &str, text: &str) -> Result<StorePath> {
     self.add_bytes_to_store(name, text.as_bytes())
   }
+
+  /// Register a store path as a temporary GC root.
+  ///
+  /// The root lasts until the process exits. On a daemon store it lasts
+  /// until the daemon connection that carried the request closes.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the store rejects the request.
+  #[cfg(feature = "shim")]
+  pub fn add_temp_root(&self, path: &StorePath) -> Result<()> {
+    // SAFETY: context, store, and path are valid
+    let err = unsafe {
+      sys::nix_store_add_temp_root(
+        self._context.as_ptr(),
+        self.inner.as_ptr(),
+        path.inner.as_ptr(),
+      )
+    };
+
+    unsafe { check_err(self._context.as_ptr(), err) }
+  }
 }
 
 impl Drop for Store {
