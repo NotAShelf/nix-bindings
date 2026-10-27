@@ -66,6 +66,48 @@ impl<'a> Value<'a> {
     }
   }
 
+  /// Retrieve an attribute without evaluating its value.
+  ///
+  /// Forces the containing attribute set, not its members.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error on evaluation failure, type mismatch, or a missing key.
+  pub fn get_attr_lazy(&self, key: &str) -> Result<Value<'a>> {
+    self.force_shared()?;
+    let actual = self.value_type();
+    if actual != crate::ValueType::Attrs {
+      return Err(Error::InvalidType {
+        expected: "attrs",
+        actual:   actual.to_string(),
+      });
+    }
+    let key_c = CString::new(key)?;
+    // SAFETY: the container is evaluated and all inputs outlive this call.
+    let inner = unsafe {
+      crate::check_ptr(
+        self.state.context.as_ptr(),
+        crate::sys::nix_get_attr_byname_lazy(
+          self.state.context.as_ptr(),
+          self.inner.as_ptr(),
+          self.state.as_ptr(),
+          key_c.as_ptr(),
+        ),
+      )
+    };
+    let inner = match inner {
+      Ok(inner) => inner,
+      Err(Error::KeyNotFound(_)) => {
+        return Err(Error::KeyNotFound(key.to_owned()));
+      },
+      Err(error) => return Err(error),
+    };
+    Ok(Value {
+      inner,
+      state: self.state,
+    })
+  }
+
   /// Get all attribute keys.
   ///
   /// Returns a vector of all attribute names in this attribute set.
@@ -313,6 +355,21 @@ mod tests {
 
     let result = attrs.get_attr("missing");
     assert!(result.is_err());
+  }
+
+  #[test]
+  #[serial]
+  fn test_get_attr_lazy_missing_preserves_key() {
+    let state = setup().build().expect("Failed to build state");
+    let attrs = state
+      .eval_from_string("{ foo = 42; }", "<eval>")
+      .expect("Failed to evaluate attrs");
+
+    let result = attrs.get_attr_lazy("missing");
+    assert!(matches!(
+      result,
+      Err(crate::Error::KeyNotFound(key)) if key == "missing"
+    ));
   }
 
   #[test]

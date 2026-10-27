@@ -18,6 +18,8 @@
 
 use std::{ffi::CString, ptr::NonNull, sync::Arc};
 
+#[cfg(feature = "shim")]
+use crate::error::checked_string_from_callback;
 use crate::{
   Context,
   EvalState,
@@ -25,7 +27,7 @@ use crate::{
   Value,
   check_err,
   check_ptr,
-  checked_string_from_callback,
+  error::catch_callback,
   sys,
 };
 
@@ -92,13 +94,6 @@ impl Drop for FlakeSettings {
   }
 }
 
-// SAFETY: `FlakeSettings` owns its `nix_flake_settings*` and uses the
-// `Arc<Context>` purely for lifetime extension. The settings object
-// holds plain configuration values with no thread affinity. `Sync` is
-// NOT implemented: every method that consults the settings goes through
-// `Context`'s racy error buffer.
-unsafe impl Send for FlakeSettings {}
-
 /// Fetcher configuration.
 ///
 /// This is required by [`FlakeReference::parse`] and [`LockedFlake::lock`].
@@ -138,13 +133,6 @@ impl Drop for FetchersSettings {
     }
   }
 }
-
-// SAFETY: `FetchersSettings` is an opaque pointer to plain configuration
-// values, kept alive by `Arc<Context>`. The C object has no thread
-// affinity. `Sync` is NOT implemented for the same reason as
-// `FlakeSettings`: any call into it routes through `Context`'s racy
-// error buffer.
-unsafe impl Send for FetchersSettings {}
 
 /// Flags that control how a flake reference string is parsed.
 ///
@@ -217,13 +205,6 @@ impl Drop for FlakeReferenceParseFlags {
     }
   }
 }
-
-// SAFETY: `FlakeReferenceParseFlags` is a small flags struct kept alive
-// by `Arc<Context>` plus `Arc<FlakeSettings>`. Both Arcs are themselves
-// `Send` for our types (see their notes). The C object has no thread
-// affinity. `Sync` is NOT implemented: `set_base_directory` mutates
-// state through `Context`'s racy error buffer.
-unsafe impl Send for FlakeReferenceParseFlags {}
 
 /// Lock-file update strategy for [`LockFlags::set_mode`].
 ///
@@ -348,13 +329,6 @@ impl Drop for LockFlags {
   }
 }
 
-// SAFETY: `LockFlags` is a small mode-and-overrides struct kept alive
-// by `Arc<Context>` plus `Arc<FlakeSettings>`. Same move-only contract
-// as `FlakeReferenceParseFlags`. `Sync` is NOT implemented:
-// `set_mode` and `add_input_override` mutate through `Context`'s racy
-// error buffer.
-unsafe impl Send for LockFlags {}
-
 /// Callback that collects a string returned from the Nix C API via a pointer
 /// and length pair into an `Option<String>` stored in `user_data`.
 unsafe extern "C" fn collect_fragment_cb(
@@ -362,12 +336,15 @@ unsafe extern "C" fn collect_fragment_cb(
   n: std::os::raw::c_uint,
   user_data: *mut std::os::raw::c_void,
 ) {
-  let result = unsafe { &mut *(user_data as *mut Option<String>) };
-  if !start.is_null() {
-    let bytes =
-      unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
-    *result = std::str::from_utf8(bytes).ok().map(|s| s.to_owned());
-  }
+  let _ = catch_callback(|| {
+    // SAFETY: Nix supplies the live callback output and a readable byte slice.
+    let result = unsafe { &mut *(user_data as *mut Option<String>) };
+    if !start.is_null() {
+      let bytes =
+        unsafe { std::slice::from_raw_parts(start.cast::<u8>(), n as usize) };
+      *result = std::str::from_utf8(bytes).ok().map(str::to_owned);
+    }
+  });
 }
 
 /// An unresolved flake reference.
@@ -441,15 +418,6 @@ impl Drop for FlakeReference {
   }
 }
 
-// SAFETY: `FlakeReference` wraps a parsed but unresolved reference value
-// owned outright via `nix_flake_reference*`, kept alive by
-// `Arc<Context>`. Resolution happens later through `LockedFlake::lock`,
-// which calls into `Context`; sending the unresolved value to another
-// thread before locking is sound. `Sync` is NOT implemented because
-// `lock` and `add_input_override` mutate through `Context`'s error
-// buffer.
-unsafe impl Send for FlakeReference {}
-
 /// A fully locked flake.
 ///
 /// Obtain one via [`LockedFlake::lock`], then call
@@ -460,6 +428,7 @@ pub struct LockedFlake {
   _context: Arc<Context>,
 }
 
+#[cfg(feature = "shim")]
 /// A locked flake graph imported from an owned export payload.
 ///
 /// This is intentionally narrower than [`LockedFlake`]. It contains enough
@@ -505,6 +474,7 @@ impl LockedFlake {
     })
   }
 
+  #[cfg(feature = "shim")]
   /// Export this locked flake as an owned JSON graph.
   ///
   /// The exported JSON contains the lock file and the source-path overrides
@@ -549,6 +519,7 @@ impl LockedFlake {
   }
 }
 
+#[cfg(feature = "shim")]
 impl ImportedLockedFlake {
   /// Import a locked flake graph from an owned JSON graph.
   ///
@@ -635,6 +606,7 @@ impl Drop for LockedFlake {
   }
 }
 
+#[cfg(feature = "shim")]
 impl Drop for ImportedLockedFlake {
   fn drop(&mut self) {
     // SAFETY: We own the locked flake and it is valid until drop
@@ -644,19 +616,10 @@ impl Drop for ImportedLockedFlake {
   }
 }
 
-// SAFETY: `LockedFlake` owns its `nix_locked_flake*` and keeps the
-// context alive via `Arc<Context>`. The locked-flake value is immutable
-// once produced; calling `output_attrs` only reads from it but still
-// routes through `Context`'s error buffer, which is why `Sync` is NOT
-// implemented.
-unsafe impl Send for LockedFlake {}
-
-// SAFETY: same ownership and thread-safety contract as `LockedFlake`.
-unsafe impl Send for ImportedLockedFlake {}
-
 #[cfg(test)]
 mod tests {
-  use std::{fs, sync::Arc};
+  #[cfg(feature = "shim")] use std::fs;
+  use std::sync::Arc;
 
   use serial_test::serial;
 
@@ -755,6 +718,7 @@ mod tests {
       .expect("set WriteAsNeeded");
   }
 
+  #[cfg(feature = "shim")]
   #[test]
   #[serial]
   fn test_locked_flake_export_import_json() {

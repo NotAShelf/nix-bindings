@@ -4,8 +4,8 @@
   # in nixos-stable. Fortunately the C API does not move fast enough, so
   # there is a degree of forward-compatibility.
   nixForBindings = pkgs.nixVersions.nix_2_35;
-  inherit (pkgs) lib;
   inherit (pkgs.rustc) llvmPackages;
+  inherit (pkgs) lib;
 in
   pkgs.mkShell {
     name = "nix-bindings";
@@ -23,8 +23,6 @@ in
       taplo
       lldb
 
-      # Additional Cargo tooling
-      cargo-llvm-cov
       cargo-nextest
     ];
 

@@ -1,11 +1,12 @@
 //! [`Context`] (Nix C-API context handle), [`Verbosity`], and free
 //! helpers that read process-global Nix state.
 
-#![cfg(feature = "store")]
+#![cfg(feature = "util")]
 
 use std::{
   ffi::{CStr, CString},
   ptr::NonNull,
+  sync::OnceLock,
 };
 
 use crate::{
@@ -33,26 +34,21 @@ pub fn nix_version() -> &'static str {
 
 /// Returns `true` when Nix is running in pure evaluation mode (`--pure-eval`).
 ///
-/// Reads the global `pure-eval` Nix setting. The result reflects the setting
-/// at call time and is stable for the lifetime of a single Nix evaluation.
+/// Reads the global `pure-eval` Nix setting using the supplied context.
+/// Returns `false` if reading the setting fails.
 ///
 /// # Use in primops
 ///
-/// [`primop::PrimOpRet::set_path`](crate::primop::PrimOpRet::set_path) and
-/// [`primop::PrimOpRet::make_path`](crate::primop::PrimOpRet::make_path)
+/// `PrimOpRet::set_path` and `PrimOpRet::make_path`
 /// call `nix_init_path_string` internally, which the Nix evaluator rejects
 /// for absolute paths in pure mode. Check this function first so your
 /// primop can make the right call: return an explicit error, use a string,
 /// or refuse to run at all.
-pub fn is_pure_eval() -> bool {
-  // SAFETY: nix_setting_get is safe with a null context; errors are silently
-  // ignored, and a missing key means the default (false).
-  unsafe {
-    let val = string_from_callback(|cb, ud| {
-      sys::nix_setting_get(std::ptr::null_mut(), c"pure-eval".as_ptr(), cb, ud);
-    });
-    val.as_deref() == Some("true")
-  }
+#[cfg(feature = "expr")]
+pub fn is_pure_eval(context: &Context) -> bool {
+  context
+    .get_setting("pure-eval")
+    .is_ok_and(|value| value == "true")
 }
 
 /// Verbosity level for Nix log output.
@@ -95,6 +91,9 @@ impl Verbosity {
 ///
 /// This is the root object for all Nix operations. It manages the lifetime
 /// of the Nix C API context and provides automatic cleanup.
+///
+/// Construct, use, and drop a context and its dependent wrappers on the same
+/// thread. Contexts are neither `Send` nor `Sync`.
 pub struct Context {
   inner: NonNull<sys::nix_c_context>,
 }
@@ -103,6 +102,9 @@ impl Context {
   /// Create a new Nix context.
   ///
   /// This initializes the Nix C API context and the required libraries.
+  /// Initialization runs once per process for the enabled `util`, `store`,
+  /// and `expr` features. An initialization failure is retained and returned
+  /// by subsequent calls.
   ///
   /// # Errors
   ///
@@ -125,6 +127,7 @@ impl Context {
   /// # Errors
   ///
   /// Returns an error if context creation or library initialization fails.
+  #[cfg(feature = "store")]
   pub fn new_no_load_config() -> Result<Self> {
     Self::new_inner(true)
   }
@@ -136,39 +139,42 @@ impl Context {
 
     let ctx = Context { inner };
 
-    // The nix_lib*_init functions are documented as one-shot. Reinvoking
-    // them across Contexts is a waste at best and a race at worst; the
-    // Once gate ensures exactly one initialization per process.
-    static INIT: std::sync::Once = std::sync::Once::new();
-    let mut init_err: Result<()> = Ok(());
-    INIT.call_once(|| {
-      // SAFETY: nix_lib*_init are safe with a fresh context.
-      let r = (|| unsafe {
-        check_err(
-          ctx.inner.as_ptr(),
-          sys::nix_libutil_init(ctx.inner.as_ptr()),
-        )?;
-        let store_err = if no_load_config {
-          sys::nix_libstore_init_no_load_config(ctx.inner.as_ptr())
-        } else {
-          sys::nix_libstore_init(ctx.inner.as_ptr())
-        };
-        check_err(ctx.inner.as_ptr(), store_err)?;
-        check_err(
-          ctx.inner.as_ptr(),
-          sys::nix_libexpr_init(ctx.inner.as_ptr()),
-        )
-      })();
-      init_err = r;
-    });
-    init_err?;
+    static INIT: OnceLock<Result<()>> = OnceLock::new();
+    INIT
+      .get_or_init(|| {
+        #[cfg(not(feature = "store"))]
+        let _ = no_load_config;
+        // SAFETY: the context is live, and initialization is serialized.
+        unsafe {
+          check_err(
+            ctx.inner.as_ptr(),
+            sys::nix_libutil_init(ctx.inner.as_ptr()),
+          )?;
+          #[cfg(feature = "store")]
+          {
+            let store_err = if no_load_config {
+              sys::nix_libstore_init_no_load_config(ctx.inner.as_ptr())
+            } else {
+              sys::nix_libstore_init(ctx.inner.as_ptr())
+            };
+            check_err(ctx.inner.as_ptr(), store_err)?;
+          }
+          #[cfg(feature = "expr")]
+          check_err(
+            ctx.inner.as_ptr(),
+            sys::nix_libexpr_init(ctx.inner.as_ptr()),
+          )?;
+        }
+        Ok(())
+      })
+      .clone()?;
 
     Ok(ctx)
   }
 
   /// Set a global Nix configuration setting.
   ///
-  /// Settings take effect for new [`EvalState`](crate::EvalState) instances.
+  /// Settings take effect for new evaluator instances.
   /// Use `"extra-<name>"` to append to an existing setting's value.
   ///
   /// # Errors
@@ -231,9 +237,8 @@ impl Context {
   /// Clear any error state currently stored on the context.
   ///
   /// Nix's C API parks the last error message and code on the context.
-  /// Code paths that signal failure by returning a null pointer (e.g.
-  /// [`Value::get_attr`](crate::Value::get_attr)) inspect that buffer to
-  /// decide whether the null was a genuine failure or just an absent
+  /// Code paths that signal failure by returning a null pointer inspect
+  /// that buffer to decide whether the null was a genuine failure or an absent
   /// value, so a stale message from an earlier unrelated call can confuse
   /// them. Call this between recoverable operations to reset the buffer.
   pub fn clear_error(&self) {
@@ -243,9 +248,8 @@ impl Context {
 
   /// Load Nix's configured plugins.
   ///
-  /// Reads the `plugin-files` setting and loads each entry. Must be called
-  /// before any [`EvalState`](crate::EvalState) is built for plugins to be
-  /// visible.
+  /// Call once after initialization and setting configuration, before
+  /// constructing any evaluator instances that need the plugins.
   ///
   /// # Errors
   ///
@@ -298,6 +302,7 @@ impl Context {
   /// # Safety
   ///
   /// The caller must ensure the pointer is used safely.
+  #[cfg(feature = "store")]
   pub(crate) unsafe fn as_ptr(&self) -> *mut sys::nix_c_context {
     self.inner.as_ptr()
   }
@@ -311,11 +316,3 @@ impl Drop for Context {
     }
   }
 }
-
-// SAFETY: `nix_c_context` is exclusively-owned mutable state. Moving the
-// pointer to another thread is sound provided the source thread releases
-// ownership; the Box-like value semantics of `Context` already enforce
-// that at the type level. `Sync` is NOT implemented: every C entry point
-// rewrites the per-context error buffer, so two threads holding
-// `&Context` would race on that buffer with no synchronization.
-unsafe impl Send for Context {}
