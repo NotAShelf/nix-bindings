@@ -28,6 +28,9 @@ jobs:
         with:
           nix_path: nixpkgs=channel:nixos-25.11
 
+      - name: Install cargo-llvm-cov
+        run: nix develop --command cargo install cargo-llvm-cov --version 0.9.1 --locked
+
       - name: Generate coverage report
         working-directory: nix-bindings-sys
         run: |
