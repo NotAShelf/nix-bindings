@@ -1485,6 +1485,10 @@ mod tests {
       assert!(!attrs.has("zzz")?);
       let keys = attrs.keys()?;
       assert_eq!(keys.len(), 3);
+      assert!(matches!(
+        attrs.get_lazy("missing"),
+        Err(Error::KeyNotFound(key)) if key == "missing"
+      ));
       ret.set_null()
     })
     .expect("Failed to create primop");
@@ -1716,5 +1720,31 @@ mod tests {
        got {:?}",
       result.map(|v| v.value_type()),
     );
+  }
+
+  #[test]
+  #[serial]
+  fn test_primop_panic_message_is_preserved() {
+    let ctx = Arc::new(Context::new().expect("Failed to create context"));
+    let store =
+      Arc::new(Store::open(&ctx, None).expect("Failed to open store"));
+    let state = EvalStateBuilder::new(&store)
+      .expect("Failed to create builder")
+      .build()
+      .expect("Failed to build state");
+
+    let primop =
+      PrimOp::new(&ctx, "panicking_primop", 1, None, |_args, _ret| {
+        panic!("intentional primop panic")
+      })
+      .expect("Failed to create primop");
+    let func = primop
+      .into_value(&state)
+      .expect("Failed to embed primop as value");
+    let arg = state.make_int(1).expect("Failed to make int");
+    let error = func
+      .call(&arg)
+      .expect_err("Expected panicking primop to fail");
+    assert!(error.to_string().contains("intentional primop panic"));
   }
 }
