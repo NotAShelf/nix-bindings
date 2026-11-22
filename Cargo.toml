@@ -16,7 +16,7 @@ version       = "0.2356.0"
 nix-bindings-sys = { default-features = false, path = "./nix-bindings-sys", version = "0.2356.0" }
 
 bindgen         = { default-features = false, features = [ "logging", "runtime" ], version = "0.73.2" }
-cc              = "1.4.6"
+cc              = "1.11.3"
 doxygen-bindgen = "0.1.4"
 pkg-config      = "0.3.34"
 serial_test     = "4.0.1"
